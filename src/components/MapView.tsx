@@ -167,8 +167,8 @@ export default function MapView({
           onNodeClick(node.id);
         });
         marker.on('contextmenu', (e) => {
-          L.DomEvent.stopPropagation(e);
-          L.DomEvent.preventDefault(e);
+          L.DomEvent.stopPropagation(e as any);
+          L.DomEvent.preventDefault(e as any);
           onNodeRightClick(node.id);
         });
 
@@ -227,8 +227,8 @@ export default function MapView({
           onEdgeClick(edge.id);
         });
         line.on('contextmenu', (e) => {
-          L.DomEvent.stopPropagation(e);
-          L.DomEvent.preventDefault(e);
+          L.DomEvent.stopPropagation(e as any);
+          L.DomEvent.preventDefault(e as any);
           onEdgeRightClick(edge.id);
         });
 
