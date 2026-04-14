@@ -3,6 +3,7 @@ import { GraphNode, Vehicle } from '@/lib/engine';
 import { AppMode } from '@/hooks/useSimulation';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
+import { Volume2, VolumeX } from 'lucide-react';
 
 interface ControlPanelProps {
   mode: AppMode;
@@ -17,12 +18,16 @@ interface ControlPanelProps {
   simulationRunning: boolean;
   onAddVehicle: () => void;
   onRemoveVehicle: (id: string) => void;
-  onUpdateVehicle: (id: string, field: string, value: string | number) => void;
+  onUpdateVehicle: (id: string, field: string, value: any) => void;
   onStartSimulation: () => void;
   onStopSimulation: () => void;
+  // Voice
+  isGlobalMuted: boolean;
+  setIsGlobalMuted: (m: boolean) => void;
 }
 
 const selectClass = 'w-full bg-secondary text-foreground text-xs rounded px-2 py-1.5 border border-border focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50';
+const inputClass = 'w-full bg-secondary text-foreground text-[11px] rounded px-2 py-1 border border-border focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50';
 
 export default function ControlPanel({
   mode, setMode, pois, nodeType, setNodeType,
@@ -30,14 +35,20 @@ export default function ControlPanel({
   vehicles, simulationRunning,
   onAddVehicle, onRemoveVehicle, onUpdateVehicle,
   onStartSimulation, onStopSimulation,
+  isGlobalMuted, setIsGlobalMuted,
 }: ControlPanelProps) {
   const fileRef = useRef<HTMLInputElement>(null);
 
   return (
     <div className="absolute top-4 right-4 z-30 w-72 glass-panel rounded-xl p-4 space-y-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
-      <div>
-        <h1 className="text-sm font-bold text-primary tracking-wider uppercase">ValeRoute</h1>
-        <p className="text-[10px] text-muted-foreground">Porto Ponta da Madeira</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-sm font-bold text-primary tracking-wider uppercase">ValeRoute GPS</h1>
+          <p className="text-[10px] text-muted-foreground">Porto Ponta da Madeira</p>
+        </div>
+        <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setIsGlobalMuted(!isGlobalMuted)}>
+          {isGlobalMuted ? <VolumeX className="h-4 w-4 text-destructive" /> : <Volume2 className="h-4 w-4 text-primary" />}
+        </Button>
       </div>
 
       <div className="flex gap-1">
@@ -55,12 +66,13 @@ export default function ControlPanel({
         <>
           <div className="space-y-1">
             <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Tipo de Nó</label>
-            <div className="flex gap-1">
-              <Button size="sm" variant={nodeType === 'POI' ? 'default' : 'secondary'} className="flex-1 text-xs" onClick={() => setNodeType('POI')}>POI</Button>
-              <Button size="sm" variant={nodeType === 'Junction' ? 'default' : 'secondary'} className="flex-1 text-xs" onClick={() => setNodeType('Junction')}>Junção</Button>
+            <div className="flex flex-wrap gap-1">
+              <Button size="sm" variant={nodeType === 'POI' ? 'default' : 'secondary'} className="flex-1 text-[10px]" onClick={() => setNodeType('POI')}>POI</Button>
+              <Button size="sm" variant={nodeType === 'Junction' ? 'default' : 'secondary'} className="flex-1 text-[10px]" onClick={() => setNodeType('Junction')}>Junção</Button>
+              <Button size="sm" variant={nodeType === 'Crossroad' ? 'default' : 'secondary'} className="flex-1 text-[10px]" onClick={() => setNodeType('Crossroad')}>Cruzamento</Button>
             </div>
           </div>
-          <p className="text-[10px] text-muted-foreground">Clique no mapa para criar nós. Clique em 2 nós para conectar. Clique direito para opções.</p>
+          <p className="text-[10px] text-muted-foreground italic">Clique no mapa para criar nós. Clique em 2 nós para conectar. Clique direito para configurar ângulos em Cruzamentos.</p>
           <div className="flex gap-1">
             <Button size="sm" variant="secondary" className="flex-1 text-xs" onClick={onExport}>Exportar</Button>
             <Button size="sm" variant="secondary" className="flex-1 text-xs" onClick={() => fileRef.current?.click()}>Importar</Button>
@@ -74,13 +86,13 @@ export default function ControlPanel({
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Veículos</label>
-              {!simulationRunning && vehicles.length < 5 && (
+              {!simulationRunning && vehicles.length < 10 && (
                 <Button size="sm" variant="ghost" className="text-xs h-6 px-2" onClick={onAddVehicle}>+ Adicionar</Button>
               )}
             </div>
 
             {vehicles.length === 0 && (
-              <p className="text-[10px] text-muted-foreground italic">Nenhum veículo. Adicione até 5.</p>
+              <p className="text-[10px] text-muted-foreground italic">Nenhum veículo. Adicione até 10.</p>
             )}
 
             {vehicles.map((v) => (
@@ -88,31 +100,44 @@ export default function ControlPanel({
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: v.color }} />
                   <span className="text-xs font-medium flex-1">{v.name}</span>
-                  {v.status === 'arrived' && <span className="text-[9px] text-primary">✓ Chegou</span>}
-                  {v.status === 'stuck' && <span className="text-[9px] text-destructive">✗ Sem rota</span>}
+                  <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => onUpdateVehicle(v.id, 'isMuted', !v.isMuted)}>
+                    {v.isMuted ? <VolumeX className="h-3 w-3 text-destructive" /> : <Volume2 className="h-3 w-3 text-muted-foreground" />}
+                  </Button>
                   {!simulationRunning && (
                     <button className="text-muted-foreground hover:text-destructive text-sm leading-none" onClick={() => onRemoveVehicle(v.id)}>×</button>
                   )}
                 </div>
 
-                <div className="space-y-1">
-                  <label className="text-[10px] text-muted-foreground">Partida</label>
-                  <select disabled={simulationRunning} value={v.originId} onChange={(e) => onUpdateVehicle(v.id, 'originId', e.target.value)} className={selectClass}>
-                    <option value="">Selecione...</option>
-                    {pois.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </select>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-[9px] text-muted-foreground">Partida</label>
+                    <select disabled={simulationRunning} value={v.originId} onChange={(e) => onUpdateVehicle(v.id, 'originId', e.target.value)} className={selectClass}>
+                      <option value="">...</option>
+                      {pois.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[9px] text-muted-foreground">Destino</label>
+                    <select disabled={simulationRunning} value={v.destinationId} onChange={(e) => onUpdateVehicle(v.id, 'destinationId', e.target.value)} className={selectClass}>
+                      <option value="">...</option>
+                      {pois.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-[9px] text-muted-foreground">Largura (m)</label>
+                    <input type="number" step="0.1" disabled={simulationRunning} value={v.width} onChange={(e) => onUpdateVehicle(v.id, 'width', parseFloat(e.target.value))} className={inputClass} />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[9px] text-muted-foreground">Altura (m)</label>
+                    <input type="number" step="0.1" disabled={simulationRunning} value={v.height} onChange={(e) => onUpdateVehicle(v.id, 'height', parseFloat(e.target.value))} className={inputClass} />
+                  </div>
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[10px] text-muted-foreground">Destino</label>
-                  <select disabled={simulationRunning} value={v.destinationId} onChange={(e) => onUpdateVehicle(v.id, 'destinationId', e.target.value)} className={selectClass}>
-                    <option value="">Selecione...</option>
-                    {pois.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[10px] text-muted-foreground">Velocidade: {v.speed} km/h</label>
+                  <label className="text-[10px] text-muted-foreground">Velocidade Máx: {v.speed} km/h</label>
                   <Slider min={5} max={120} step={5} value={[v.speed]}
                     onValueChange={([val]) => onUpdateVehicle(v.id, 'speed', val)}
                     disabled={simulationRunning} />

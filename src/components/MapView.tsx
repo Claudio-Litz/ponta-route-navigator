@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { GraphNode, GraphEdge, Vehicle, haversine } from '@/lib/engine';
+import { GraphNode, GraphEdge, Vehicle, haversine, GroundType } from '@/lib/engine';
 import { AppMode } from '@/hooks/useSimulation';
 
 interface MapViewProps {
@@ -21,15 +21,23 @@ interface MapViewProps {
   onVehicleArrived: (id: string) => void;
   onRecalcNeeded: (vehicleId: string, fromNodeId: string) => void;
   onChangeDestination: (vehicleId: string, newDestId: string, fromNodeId: string) => void;
+  onVoiceTrigger: (vehicleId: string, nodeId: string, inNodeId: string, outNodeId: string, distance: number) => void;
+  setFocusedVehicleId: (id: string | null) => void;
 }
 
-const NODE_COLORS = { POI: '#22c55e', Junction: '#64748b', selected: '#facc15' };
+const NODE_COLORS = { POI: '#22c55e', Junction: '#64748b', Crossroad: '#3b82f6', selected: '#facc15' };
+const GROUND_COLORS: Record<GroundType, string> = {
+  asfalto: '#64748b',
+  terra: '#92400e',
+  brita: '#475569',
+};
 
 export default function MapView({
   nodes, edges, mode, selectedNodes,
   vehicles, simulationRunning, focusedVehicleId, pois,
   onMapClick, onNodeClick, onNodeRightClick, onEdgeClick,
   onVehicleClick, onVehicleArrived, onRecalcNeeded, onChangeDestination,
+  onVoiceTrigger, setFocusedVehicleId,
 }: MapViewProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -37,24 +45,20 @@ export default function MapView({
   const edgeLinesRef = useRef(new Map<string, L.Polyline>());
   const arrowsRef = useRef<L.Polyline[]>([]);
   const vehicleMarkersRef = useRef(new Map<string, L.CircleMarker>());
-  const animStateRef = useRef(new Map<string, { segmentIndex: number; progress: number; pathVersion: number }>());
+  const animStateRef = useRef(new Map<string, { segmentIndex: number; progress: number; pathVersion: number; instructionTriggers: Set<string> }>());
   const frameRef = useRef(0);
   const focusRouteRef = useRef<L.Polyline[]>([]);
   const focusPopupRef = useRef<L.Popup | null>(null);
 
-  // Stable refs for animation loop
   const vehiclesRef = useRef(vehicles);
   useEffect(() => { vehiclesRef.current = vehicles; }, [vehicles]);
   const nodesRef = useRef(nodes);
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
-  const cbRef = useRef({ onVehicleArrived, onRecalcNeeded, onVehicleClick, onChangeDestination });
-  useEffect(() => { cbRef.current = { onVehicleArrived, onRecalcNeeded, onVehicleClick, onChangeDestination }; });
+  const cbRef = useRef({ onVehicleArrived, onRecalcNeeded, onVehicleClick, onChangeDestination, onVoiceTrigger });
+  useEffect(() => { cbRef.current = { onVehicleArrived, onRecalcNeeded, onVehicleClick, onChangeDestination, onVoiceTrigger }; });
   const focusedRef = useRef(focusedVehicleId);
   useEffect(() => { focusedRef.current = focusedVehicleId; }, [focusedVehicleId]);
-  const poisRef = useRef(pois);
-  useEffect(() => { poisRef.current = pois; }, [pois]);
 
-  // Build node lookup map
   const nodeMapRef = useRef(new Map<string, GraphNode>());
   useEffect(() => {
     const m = new Map<string, GraphNode>();
@@ -62,7 +66,6 @@ export default function MapView({
     nodeMapRef.current = m;
   }, [nodes]);
 
-  // 1. Initialize map
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
     const map = L.map(mapContainerRef.current, {
@@ -75,25 +78,6 @@ export default function MapView({
     }).addTo(map);
     L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-    // Grid
-    const gridGroup = L.layerGroup().addTo(map);
-    const drawGrid = () => {
-      gridGroup.clearLayers();
-      const bounds = map.getBounds();
-      const step = 0.002;
-      const south = Math.floor(bounds.getSouth() / step) * step;
-      const west = Math.floor(bounds.getWest() / step) * step;
-      for (let lat = south; lat <= bounds.getNorth(); lat += step) {
-        L.polyline([[lat, bounds.getWest()], [lat, bounds.getEast()]], { color: 'rgba(100,116,139,0.15)', weight: 1 }).addTo(gridGroup);
-      }
-      for (let lng = west; lng <= bounds.getEast(); lng += step) {
-        L.polyline([[bounds.getSouth(), lng], [bounds.getNorth(), lng]], { color: 'rgba(100,116,139,0.15)', weight: 1 }).addTo(gridGroup);
-      }
-    };
-    map.on('moveend zoomend', drawGrid);
-    drawGrid();
-
-    // Event delegation for vehicle destination select
     mapContainerRef.current.addEventListener('change', (e) => {
       const target = e.target as HTMLSelectElement;
       if (target.id?.startsWith('vdest-')) {
@@ -114,36 +98,30 @@ export default function MapView({
     return () => { map.remove(); mapRef.current = null; };
   }, []);
 
-  // 2. Map click
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    const handler = (e: L.LeafletMouseEvent) => {
-      if (mode === 'editor') onMapClick(e.latlng.lat, e.latlng.lng);
-    };
+    const handler = (e: L.LeafletMouseEvent) => { if (mode === 'editor') onMapClick(e.latlng.lat, e.latlng.lng); };
     map.on('click', handler);
     return () => { map.off('click', handler); };
   }, [mode, onMapClick]);
 
-  // 3. Draw nodes
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
     const existing = nodeMarkersRef.current;
     const currentIds = new Set(nodes.map((n) => n.id));
-    for (const [id, marker] of existing) {
-      if (!currentIds.has(id)) { marker.remove(); existing.delete(id); }
-    }
+    for (const [id, marker] of existing) { if (!currentIds.has(id)) { marker.remove(); existing.delete(id); } }
     for (const node of nodes) {
       const isSelected = selectedNodes.includes(node.id);
-      const color = isSelected ? NODE_COLORS.selected : NODE_COLORS[node.type];
+      const color = isSelected ? NODE_COLORS.selected : (NODE_COLORS[node.type] || '#64748b');
       if (existing.has(node.id)) {
         const m = existing.get(node.id)!;
         m.setLatLng([node.lat, node.lng]);
         m.setStyle({ fillColor: color, color: color });
       } else {
         const marker = L.circleMarker([node.lat, node.lng], {
-          radius: node.type === 'POI' ? 8 : 5,
+          radius: node.type === 'POI' ? 8 : (node.type === 'Crossroad' ? 7 : 5),
           fillColor: color, color, fillOpacity: 0.9, weight: 2,
         }).addTo(map);
         marker.bindTooltip(node.name, { permanent: false, className: 'node-tooltip', direction: 'top', offset: [0, -10] });
@@ -154,7 +132,6 @@ export default function MapView({
     }
   }, [nodes, selectedNodes, onNodeClick, onNodeRightClick]);
 
-  // 4. Draw edges
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -162,23 +139,23 @@ export default function MapView({
     const currentIds = new Set(edges.map((e) => e.id));
     arrowsRef.current.forEach((d) => d.remove());
     arrowsRef.current = [];
-    for (const [id, line] of existing) {
-      if (!currentIds.has(id)) { line.remove(); existing.delete(id); }
-    }
+    for (const [id, line] of existing) { if (!currentIds.has(id)) { line.remove(); existing.delete(id); } }
     for (const edge of edges) {
       const fromNode = nodeMapRef.current.get(edge.from);
       const toNode = nodeMapRef.current.get(edge.to);
       if (!fromNode || !toNode) continue;
       const latlngs: L.LatLngExpression[] = [[fromNode.lat, fromNode.lng], [toNode.lat, toNode.lng]];
-      const edgeColor = edge.isBlocked ? '#ef4444' : '#64748b';
+      const edgeColor = edge.isBlocked ? '#ef4444' : (edge.hasMud ? '#78350f' : GROUND_COLORS[edge.groundType]);
       const dashArray = edge.isBlocked ? '8, 8' : undefined;
+      const weight = edge.hasMud ? 5 : 3;
       if (existing.has(edge.id)) {
         const line = existing.get(edge.id)!;
         line.setLatLngs(latlngs);
-        line.setStyle({ color: edgeColor, dashArray });
+        line.setStyle({ color: edgeColor, dashArray, weight });
       } else {
-        const line = L.polyline(latlngs, { color: edgeColor, weight: 3, opacity: 0.8, dashArray }).addTo(map);
+        const line = L.polyline(latlngs, { color: edgeColor, weight, opacity: 0.8, dashArray }).addTo(map);
         line.on('click', (e) => { L.DomEvent.stopPropagation(e); onEdgeClick(edge.id); });
+        line.bindTooltip(`Lim: ${edge.speedLimit}km/h | Solo: ${edge.groundType}`, { sticky: true });
         existing.set(edge.id, line);
       }
       if (!edge.bidirectional && !edge.isBlocked) {
@@ -195,44 +172,21 @@ export default function MapView({
     }
   }, [edges, nodes, onEdgeClick]);
 
-  // 5. Vehicle animation
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-
     if (!simulationRunning) {
       cancelAnimationFrame(frameRef.current);
       vehicleMarkersRef.current.forEach((m) => m.remove());
       vehicleMarkersRef.current.clear();
       animStateRef.current.clear();
-      // Clear focus route
       focusRouteRef.current.forEach((l) => l.remove());
       focusRouteRef.current = [];
       if (focusPopupRef.current) { focusPopupRef.current.remove(); focusPopupRef.current = null; }
       return;
     }
 
-    // Create markers for vehicles that don't have one yet
-    for (const v of vehicles) {
-      if ((v.status !== 'moving' && v.status !== 'stuck') || !v.path || v.path.length < 2) continue;
-      if (!vehicleMarkersRef.current.has(v.id)) {
-        const startNode = nodeMapRef.current.get(v.path[0]);
-        if (!startNode) continue;
-        const marker = L.circleMarker([startNode.lat, startNode.lng], {
-          radius: 10, fillColor: v.color, color: '#ffffff', fillOpacity: 1, weight: 2,
-        }).addTo(map);
-        marker.on('click', (e) => {
-          L.DomEvent.stopPropagation(e);
-          cbRef.current.onVehicleClick(v.id);
-        });
-        marker.bindTooltip(v.name, { permanent: false, className: 'node-tooltip', direction: 'top', offset: [0, -14] });
-        vehicleMarkersRef.current.set(v.id, marker);
-        animStateRef.current.set(v.id, { segmentIndex: 0, progress: 0, pathVersion: v.pathVersion });
-      }
-    }
-
     let lastTime = performance.now();
-
     const animate = (time: number) => {
       const dt = Math.min((time - lastTime) / 1000, 0.1);
       lastTime = time;
@@ -240,8 +194,7 @@ export default function MapView({
       const nm = nodeMapRef.current;
 
       for (const v of currentVehicles) {
-        if (v.status !== 'moving' || !v.path || v.path.length < 2) {
-          // Mantém o marcador se o veículo estiver 'stuck'
+        if ((v.status !== 'moving' && v.status !== 'stuck') || !v.path || v.path.length < 2) {
           if (v.status === 'arrived' || v.status === 'idle') {
             const m = vehicleMarkersRef.current.get(v.id);
             if (m) { m.remove(); vehicleMarkersRef.current.delete(v.id); }
@@ -249,23 +202,26 @@ export default function MapView({
           continue;
         }
 
+        if (!vehicleMarkersRef.current.has(v.id)) {
+          const startNode = nm.get(v.path[0]);
+          if (startNode) {
+            const marker = L.circleMarker([startNode.lat, startNode.lng], {
+              radius: 10, fillColor: v.color, color: '#ffffff', fillOpacity: 1, weight: 2,
+            }).addTo(map);
+            marker.on('click', (e) => { L.DomEvent.stopPropagation(e); cbRef.current.onVehicleClick(v.id); });
+            vehicleMarkersRef.current.set(v.id, marker);
+          }
+        }
+
         let state = animStateRef.current.get(v.id);
-        if (!state) {
-          state = { segmentIndex: 0, progress: 0, pathVersion: v.pathVersion };
+        if (!state || state.pathVersion !== v.pathVersion) {
+          state = { segmentIndex: 0, progress: 0, pathVersion: v.pathVersion, instructionTriggers: new Set() };
           animStateRef.current.set(v.id, state);
         }
 
-        // Path was updated (recalculation)
-        if (state.pathVersion !== v.pathVersion) {
-          state.segmentIndex = 0;
-          state.progress = 0;
-          state.pathVersion = v.pathVersion;
-        }
+        if (v.status === 'stuck') continue;
 
         if (state.segmentIndex >= v.path.length - 1) {
-          // Arrived at destination
-          const dest = nm.get(v.path[v.path.length - 1]);
-          if (dest) vehicleMarkersRef.current.get(v.id)?.setLatLng([dest.lat, dest.lng]);
           cbRef.current.onVehicleArrived(v.id);
           continue;
         }
@@ -274,84 +230,88 @@ export default function MapView({
         const toNode = nm.get(v.path[state.segmentIndex + 1]);
         if (!fromNode || !toNode) continue;
 
+        const edge = edges.find(e => (e.from === fromNode.id && e.to === toNode.id) || (e.bidirectional && e.from === toNode.id && e.to === fromNode.id));
+        let speedKmh = v.speed;
+        if (edge) {
+          const groundFactor = edge.groundType === 'asfalto' ? 1.0 : (edge.groundType === 'terra' ? 0.7 : 0.5);
+          speedKmh = Math.min(v.speed, edge.speedLimit * groundFactor);
+          if (edge.hasMud) speedKmh = Math.min(speedKmh, 30);
+        }
+
         const dist = haversine(fromNode.lat, fromNode.lng, toNode.lat, toNode.lng);
-        const speedMs = v.speed * 1000 / 3600;
+        const speedMs = speedKmh * 1000 / 3600;
         state.progress += (speedMs * dt) / Math.max(dist, 1);
+
+        // Gatilhos de Voz Progressivos
+        const remainingDist = dist * (1 - state.progress);
+        const nextNode = nm.get(v.path[state.segmentIndex + 1]);
+        if (nextNode?.type === 'Crossroad' && v.path[state.segmentIndex + 2]) {
+          const inNodeId = v.path[state.segmentIndex];
+          const outNodeId = v.path[state.segmentIndex + 2];
+          
+          // Início da via
+          if (state.progress < 0.05 && !state.instructionTriggers.has('start_edge')) {
+            cbRef.current.onVoiceTrigger(v.id, nextNode.id, inNodeId, outNodeId, remainingDist);
+            state.instructionTriggers.add('start_edge');
+          }
+          // Gatilhos por distância
+          const distPoints = [1000, 500, 100, 0];
+          for (const dp of distPoints) {
+            if (remainingDist <= dp && !state.instructionTriggers.has(`dist_${dp}`)) {
+              cbRef.current.onVoiceTrigger(v.id, nextNode.id, inNodeId, outNodeId, dp);
+              state.instructionTriggers.add(`dist_${dp}`);
+            }
+          }
+        }
 
         if (state.progress >= 1) {
           state.segmentIndex++;
           state.progress = 0;
-
+          state.instructionTriggers.clear();
           if (state.segmentIndex >= v.path.length - 1) {
-            const dest = nm.get(v.path[v.path.length - 1]);
-            if (dest) vehicleMarkersRef.current.get(v.id)?.setLatLng([dest.lat, dest.lng]);
             cbRef.current.onVehicleArrived(v.id);
             continue;
           }
-
-          // Check if recalculation needed
           if (v.needsRecalc) {
             cbRef.current.onRecalcNeeded(v.id, v.path[state.segmentIndex]);
             continue;
           }
         }
 
-        // Interpolate position
         const p = Math.min(state.progress, 1);
         const lat = fromNode.lat + (toNode.lat - fromNode.lat) * p;
         const lng = fromNode.lng + (toNode.lng - fromNode.lng) * p;
         const marker = vehicleMarkersRef.current.get(v.id);
         if (marker) marker.setLatLng([lat, lng]);
-
-        // Update focus popup position
-        if (focusedRef.current === v.id && focusPopupRef.current) {
-          focusPopupRef.current.setLatLng([lat, lng]);
-        }
+        if (focusedRef.current === v.id && focusPopupRef.current) focusPopupRef.current.setLatLng([lat, lng]);
       }
-
       frameRef.current = requestAnimationFrame(animate);
     };
 
     frameRef.current = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(frameRef.current);
-  }, [simulationRunning, vehicles]);
+  }, [simulationRunning, vehicles, edges]);
 
-  // 6. Focus: route line + popup
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-
-    // Clear previous
     focusRouteRef.current.forEach((l) => l.remove());
     focusRouteRef.current = [];
     if (focusPopupRef.current) { focusPopupRef.current.remove(); focusPopupRef.current = null; }
-
     if (!focusedVehicleId || !simulationRunning) return;
-
     const vehicle = vehicles.find((v) => v.id === focusedVehicleId);
     if (!vehicle?.path || vehicle.path.length < 2) return;
-
-    // Draw route
-    const latlngs = vehicle.path
-      .map((id) => nodeMapRef.current.get(id))
-      .filter(Boolean)
-      .map((n) => [n!.lat, n!.lng] as L.LatLngExpression);
-
-    const glow = L.polyline(latlngs, { color: '#22c55e', weight: 8, opacity: 0.3, className: 'neon-glow-line' }).addTo(map);
-    const line = L.polyline(latlngs, { color: '#22c55e', weight: 4, opacity: 0.9, className: 'neon-glow-line' }).addTo(map);
+    const latlngs = vehicle.path.map((id) => nodeMapRef.current.get(id)).filter(Boolean).map((n) => [n!.lat, n!.lng] as L.LatLngExpression);
+    const glow = L.polyline(latlngs, { color: '#22c55e', weight: 8, opacity: 0.3 }).addTo(map);
+    const line = L.polyline(latlngs, { color: '#22c55e', weight: 4, opacity: 0.9 }).addTo(map);
     focusRouteRef.current = [glow, line];
-
-    // Show popup
     const marker = vehicleMarkersRef.current.get(focusedVehicleId);
-    const currentPois = poisRef.current;
-    const options = currentPois.map((p) =>
-      `<option value="${p.id}" ${p.id === vehicle.destinationId ? 'selected' : ''}>${p.name}</option>`
-    ).join('');
-
+    const options = pois.map((p) => `<option value="${p.id}" ${p.id === vehicle.destinationId ? 'selected' : ''}>${p.name}</option>`).join('');
     const popup = L.popup({ className: 'vehicle-popup', closeOnClick: false, autoClose: false, closeButton: true })
       .setContent(`
         <div style="font-family:Inter,sans-serif;font-size:12px;color:#e2e8f0;">
           <strong style="color:${vehicle.color};">● ${vehicle.name}</strong>
+          <div style="font-size:10px;color:#94a3b8;margin-top:2px;">W: ${vehicle.width}m | H: ${vehicle.height}m</div>
           <div style="margin-top:6px;">
             <label style="font-size:10px;text-transform:uppercase;color:#94a3b8;">Novo Destino</label>
             <select id="vdest-${vehicle.id}" style="width:100%;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:4px;margin-top:2px;font-size:11px;">
@@ -360,25 +320,11 @@ export default function MapView({
           </div>
         </div>
       `);
-
-    if (marker) {
-      popup.setLatLng(marker.getLatLng());
-    }
+    if (marker) popup.setLatLng(marker.getLatLng());
     popup.openOn(map);
     focusPopupRef.current = popup;
+    popup.on('remove', () => { focusPopupRef.current = null; setFocusedVehicleId(null); });
+  }, [focusedVehicleId, simulationRunning, vehicles, pois, setFocusedVehicleId]);
 
-    popup.on('remove', () => {
-      focusPopupRef.current = null;
-      // Quando o popup é removido (X clicado), desmarcar o veículo para esconder a rota
-      cbRef.current.onVehicleClick(focusedVehicleId);
-    });
-  }, [focusedVehicleId, simulationRunning, vehicles]);
-
-  return (
-    <div
-      ref={mapContainerRef}
-      className="absolute inset-0 z-0"
-      style={{ cursor: mode === 'editor' ? 'crosshair' : 'default' }}
-    />
-  );
+  return <div ref={mapContainerRef} className="absolute inset-0 z-0" style={{ cursor: mode === 'editor' ? 'crosshair' : 'default' }} />;
 }
