@@ -214,7 +214,7 @@ export default function MapView({
 
     // Create markers for vehicles that don't have one yet
     for (const v of vehicles) {
-      if (v.status !== 'moving' || !v.path || v.path.length < 2) continue;
+      if ((v.status !== 'moving' && v.status !== 'stuck') || !v.path || v.path.length < 2) continue;
       if (!vehicleMarkersRef.current.has(v.id)) {
         const startNode = nodeMapRef.current.get(v.path[0]);
         if (!startNode) continue;
@@ -241,10 +241,10 @@ export default function MapView({
 
       for (const v of currentVehicles) {
         if (v.status !== 'moving' || !v.path || v.path.length < 2) {
-          // Remove marker if vehicle stopped
-          if (v.status === 'arrived' || v.status === 'stuck' || v.status === 'idle') {
+          // Mantém o marcador se o veículo estiver 'stuck'
+          if (v.status === 'arrived' || v.status === 'idle') {
             const m = vehicleMarkersRef.current.get(v.id);
-            if (m && v.status !== 'arrived') { m.remove(); vehicleMarkersRef.current.delete(v.id); }
+            if (m) { m.remove(); vehicleMarkersRef.current.delete(v.id); }
           }
           continue;
         }
@@ -369,6 +369,8 @@ export default function MapView({
 
     popup.on('remove', () => {
       focusPopupRef.current = null;
+      // Quando o popup é removido (X clicado), desmarcar o veículo para esconder a rota
+      cbRef.current.onVehicleClick(focusedVehicleId);
     });
   }, [focusedVehicleId, simulationRunning, vehicles]);
 
