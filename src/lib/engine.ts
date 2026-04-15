@@ -117,9 +117,15 @@ export interface Mission {
   /** When set, only this vehicle may be assigned — ignores proximity ranking */
   forcedVehicleId?: string;
   status: MissionStatus;
-  createdAt: number;
-  startedAt?: number;
-  completedAt?: number;
+  createdAt: number;          // simTime (seconds) when mission was created
+  startedAt?: number;         // simTime (seconds) when vehicle departed
+  completedAt?: number;       // simTime (seconds) when vehicle arrived
+  /** Estimated travel time in seconds from A* at the moment of first assignment */
+  predictedDuration?: number;
+  /** Origin node ID captured at assignment (vehicle may move before being assigned) */
+  originNodeId?: string;
+  /** Full path (node IDs) at assignment time, for the report */
+  assignedPath?: string[];
 }
 
 export interface LogEntry {

@@ -4,6 +4,7 @@ import {
   RouteWithETA, TrafficEntry, DEFAULT_TRAFFIC_TIME_WINDOW,
   LogEntry, findPath, findEdgeBetween, buildRouteWithETA, computeIntersections,
   haversine, calculateBearing, getRelativeDirection, NavigationDirection,
+  secondsToHHMMSS,
 } from '@/lib/engine';
 
 export type AppMode = 'editor' | 'simulation';
@@ -41,7 +42,7 @@ export function useSimulation() {
   const trafficWeightsRef = useRef<Map<string, number>>(new Map());
 
   // Stable ref pointing to the assignment engine (avoids circular deps)
-  const runAssignmentRef = useRef<() => void>(() => {});
+  const runAssignmentRef = useRef<() => void>(() => { });
 
   // Default traffic time window — persisted in localStorage
   const defaultTrafficWindowRef = useRef<number>(
@@ -131,61 +132,8 @@ export function useSimulation() {
 
       trafficWeightsRef.current = weights;
       setTrafficWeights(new Map(weights));
-
-      // ─ 3. Periodic re-routing (only when there is congestion) ───────────
-      if (weights.size === 0) return;
-
-      let vehicleChanged = false;
-      const updatedVehicles = currentVehicles.map(v => {
-        if (v.status !== 'moving' || !v.path || v.path.length < 2 || !v.destinationId) return v;
-
-        // Estimate the current frontier node using ETA timestamps
-        let fromNodeId = v.path[0];
-        if (v.routeWithETA.length > 0) {
-          for (let i = v.routeWithETA.length - 1; i >= 0; i--) {
-            if (v.routeWithETA[i].eta <= currentTimeMs) {
-              fromNodeId = v.path[Math.min(i + 1, v.path.length - 1)];
-              break;
-            }
-          }
-        }
-        if (fromNodeId === v.destinationId) return v;
-
-        const mission = currentMissions.find(m => m.id === v.currentMissionId);
-        const priority: MissionPriority = mission?.priority ?? 'medium';
-
-        const result = findPath(
-          graphRef.current, fromNodeId, v.destinationId,
-          v, simTimeRef.current, weights, priority
-        );
-        if (!result.success) return v;
-
-        // ── Only reroute if cost difference > 2% ────────────────────────
-        const currentCost = v.currentTotalTime ?? result.totalCost;
-        const costDiff = currentCost > 0 ? Math.abs(result.totalCost - currentCost) / currentCost : 0;
-        if (costDiff <= 0.02) return v;
-
-        // ── High priority: never accept a longer detour ───────────────────
-        if (priority === 'high' && result.totalCost > currentCost) return v;
-
-        vehicleChanged = true;
-        return {
-          ...v,
-          path: result.path,
-          pathVersion: v.pathVersion + 1,
-          routeWithETA: buildRouteWithETA(graphRef.current, result.path, v, simTimeRef.current),
-          currentRouteIndex: 0,
-          currentTotalTime: result.totalCost,
-          needsRecalc: false,
-          instructionIndex: -1,
-          spoken500: false, spoken100: false, spoken50: false,
-        };
-      });
-
-      if (vehicleChanged) {
-        vehiclesRef.current = updatedVehicles;
-        setVehicles(updatedVehicles);
-      }
+      // Rerouting of moving vehicles is intentionally NOT done here.
+      // It happens at natural node boundaries via onRecalcNeeded in MapView.
     }, 1000);
 
     return () => clearInterval(id);
@@ -357,7 +305,7 @@ export function useSimulation() {
 
   const runAssignment = useCallback(() => {
     const vehicles = vehiclesRef.current.map(v => ({ ...v }));
-    const missions  = missionsRef.current.map(m => ({ ...m }));
+    const missions = missionsRef.current.map(m => ({ ...m }));
 
     const pending = missions
       .filter(m => m.status === 'pending')
@@ -473,6 +421,7 @@ export function useSimulation() {
       }
 
       // ── Automatic vehicle selection ───────────────────────────────────────
+      const idleCandidates = vehicles.filter(v => v.status === 'idle' && v.type === mission.requiredType && !v.currentMissionId);
 
       if (idleCandidates.length > 0) {
         let best: Vehicle | null = null;
@@ -511,6 +460,10 @@ export function useSimulation() {
           status: isRunning ? 'in_progress' : 'assigned',
           assignedVehicleId: best.id,
           ...(isRunning ? { startedAt: simTimeRef.current } : {}),
+          // Capture prediction fields only on first assignment
+          predictedDuration: missions[mIdx].predictedDuration ?? (pathResult.success ? pathResult.totalCost : undefined),
+          originNodeId: missions[mIdx].originNodeId ?? (origin || undefined),
+          assignedPath: missions[mIdx].assignedPath ?? (pathResult.success ? pathResult.path : undefined),
         };
 
         vehicles[vIdx] = {
@@ -782,27 +735,53 @@ export function useSimulation() {
   // ── Recalculate (called from MapView on blocked edge or segment advance) ──
 
   const recalculateVehicle = useCallback((vehicleId: string, fromNodeId: string) => {
-    setVehicles(prev => prev.map(v => {
-      if (v.id !== vehicleId) return v;
-      const mission = missionsRef.current.find(m => m.id === v.currentMissionId);
-      const priority: MissionPriority = mission?.priority ?? 'medium';
-      const result = findPath(graphRef.current, fromNodeId, v.destinationId, v, simTimeRef.current, trafficWeightsRef.current, priority);
-      if (result.success) {
-        const pivotName = result.path.length > 1 ? (graphRef.current.nodes.get(result.path[1])?.name ?? '?') : '?';
-        addLog(`${v.name}: rota recalculada via ${pivotName}`, 'route');
-        return {
-          ...v,
-          path: result.path, pathVersion: v.pathVersion + 1, needsRecalc: false,
-          status: 'moving' as const, instructionIndex: -1,
-          spoken500: false, spoken100: false, spoken50: false,
-          currentTotalTime: result.totalCost,
-          routeWithETA: buildRouteWithETA(graphRef.current, result.path, v, simTimeRef.current),
-          currentRouteIndex: 0,
-        };
-      }
-      addLog(`${v.name}: SEM ROTA ALTERNATIVA!`, 'block');
-      return { ...v, status: 'stuck' as const, needsRecalc: false };
-    }));
+    // Read directly from ref — always current, no React closure lag
+    const vehicle = vehiclesRef.current.find(v => v.id === vehicleId);
+    if (!vehicle || vehicle.status !== 'moving') return;
+
+    const mission = missionsRef.current.find(m => m.id === vehicle.currentMissionId);
+    const priority: MissionPriority = mission?.priority ?? 'medium';
+    const result = findPath(
+      graphRef.current, fromNodeId, vehicle.destinationId,
+      vehicle, simTimeRef.current, trafficWeightsRef.current, priority
+    );
+
+    if (result.success) {
+      // Skip if A* returned the exact same path — no need to bump pathVersion
+      const sameRoute =
+        vehicle.path &&
+        vehicle.path.length === result.path.length &&
+        result.path.every((id, i) => id === vehicle.path![i]);
+      if (sameRoute) return;
+
+      const pivotName = result.path.length > 1
+        ? (graphRef.current.nodes.get(result.path[1])?.name ?? '?') : '?';
+      addLog(`${vehicle.name}: rota recalculada via ${pivotName}`, 'route');
+
+      const updated: Vehicle = {
+        ...vehicle,
+        path: result.path,
+        pathVersion: vehicle.pathVersion + 1, // animation will reset to seg 0 of new path
+        needsRecalc: false,
+        status: 'moving',
+        instructionIndex: -1,
+        spoken500: false, spoken100: false, spoken50: false,
+        currentTotalTime: result.totalCost,
+        routeWithETA: buildRouteWithETA(graphRef.current, result.path, vehicle, simTimeRef.current),
+        currentRouteIndex: 0,
+      };
+      // Sync ref IMMEDIATELY so the animation loop picks up the new pathVersion
+      // on the very next rAF frame — not one React render cycle later.
+      const newVehicles = vehiclesRef.current.map(v => v.id === vehicleId ? updated : v);
+      vehiclesRef.current = newVehicles;
+      setVehicles(newVehicles);
+    } else {
+      addLog(`${vehicle.name}: SEM ROTA ALTERNATIVA!`, 'block');
+      const updated = { ...vehicle, status: 'stuck' as const, needsRecalc: false };
+      const newVehicles = vehiclesRef.current.map(v => v.id === vehicleId ? updated : v);
+      vehiclesRef.current = newVehicles;
+      setVehicles(newVehicles);
+    }
   }, [addLog]);
 
   // ── Vehicle arrival ───────────────────────────────────────────────────────
@@ -819,29 +798,102 @@ export function useSimulation() {
     const tetra = JSON.stringify({ vehicle_id: vehicleId, type: 'navigation', distance: 0, direction: 'straight', message: msg, timestamp: new Date().toISOString() });
 
     if (vehicle.currentMissionId) {
+      const completedAt = simTimeRef.current;
       const updatedMissions = missionsRef.current.map(m =>
         m.id === vehicle.currentMissionId
-          ? { ...m, status: 'completed' as const, completedAt: simTimeRef.current }
+          ? { ...m, status: 'completed' as const, completedAt }
           : m
       );
       missionsRef.current = updatedMissions;
       setMissions(updatedMissions);
       addLog(`✓ Missão concluída por ${vehicle.name}`, 'route');
+
+      // ── Generate and auto-download mission report ────────────────────────
+      const mission = updatedMissions.find(m => m.id === vehicle.currentMissionId);
+      if (mission) {
+        const graph = graphRef.current;
+        const fmt = (secs?: number) => secs != null ? secondsToHHMMSS(secs) : '--:--:--';
+
+        // Build readable route: origin → intersections → destination
+        const routeNodeIds = mission.assignedPath ?? (vehicle.path ?? []);
+        const routeSteps = routeNodeIds.map((id, idx) => {
+          const node = graph.nodes.get(id);
+          return {
+            step: idx + 1,
+            nodeId: id,
+            name: node?.name ?? id,
+            tipo: node?.type ?? 'Junction',
+            isIntersection: node?.isIntersection ?? false,
+          };
+        });
+
+        const originNode = graph.nodes.get(mission.originNodeId ?? vehicle.originId);
+        const destNode   = graph.nodes.get(mission.destination);
+
+        const actualDuration   = mission.startedAt != null ? completedAt - mission.startedAt : undefined;
+        const predictedEnd     = mission.startedAt != null && mission.predictedDuration != null
+          ? mission.startedAt + mission.predictedDuration : undefined;
+
+        const report = {
+          relatorio_missao: {
+            // Identificação
+            missao_id:          mission.id,
+            veiculo_id:         vehicle.id,
+            veiculo_nome:       vehicle.name,
+            tipo_veiculo:       vehicle.type,
+            prioridade:         mission.priority,
+
+            // Localização
+            local_inicio:       originNode?.name ?? mission.originNodeId ?? vehicle.originId ?? '?',
+            local_inicio_id:    mission.originNodeId ?? vehicle.originId,
+            destino:            destNode?.name ?? mission.destination,
+            destino_id:         mission.destination,
+
+            // Horários (HH:MM:SS de tempo simulado)
+            horario_criacao:    fmt(mission.createdAt),
+            horario_inicio:     fmt(mission.startedAt),
+            horario_fim:        fmt(completedAt),
+            horario_previsto_fim: fmt(predictedEnd),
+
+            // Durações em segundos
+            duracao_real_s:     actualDuration != null ? Math.round(actualDuration) : null,
+            duracao_prevista_s: mission.predictedDuration != null ? Math.round(mission.predictedDuration) : null,
+            desvio_s:           actualDuration != null && mission.predictedDuration != null
+              ? Math.round(actualDuration - mission.predictedDuration) : null,
+
+            // Rota completa
+            rota_completa:      routeSteps,
+            total_nos:          routeSteps.length,
+
+            // Metadados
+            gerado_em:          new Date().toISOString(),
+          },
+        };
+
+        const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href     = url;
+        a.download = `missao_${vehicle.name.replace(/\s+/g, '_')}_${mission.id.slice(0, 8)}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        addLog(`📄 Relatório exportado: ${a.download}`, 'info');
+      }
     }
 
     const updatedVehicles = vehiclesRef.current.map(v =>
       v.id === vehicleId
         ? {
-            ...v,
-            status: 'idle' as const,
-            path: null,
-            currentMissionId: undefined,
-            waitingPoiId: v.destinationId || v.waitingPoiId,
-            originId: v.destinationId || v.originId,
-            navigationLogs: [...v.navigationLogs, tetra],
-            routeWithETA: [] as RouteWithETA,
-            currentRouteIndex: 0,
-          }
+          ...v,
+          status: 'idle' as const,
+          path: null,
+          currentMissionId: undefined,
+          waitingPoiId: v.destinationId || v.waitingPoiId,
+          originId: v.destinationId || v.originId,
+          navigationLogs: [...v.navigationLogs, tetra],
+          routeWithETA: [] as RouteWithETA,
+          currentRouteIndex: 0,
+        }
         : v
     );
     vehiclesRef.current = updatedVehicles;

@@ -230,7 +230,8 @@ export default function MapView({
     }
 
     let lastTime = performance.now();
-    const TIME_SCALE = 1;
+    // TIME_SCALE is owned by useSimulation — don't redeclare here or it overrides to 1
+    const TIME_SCALE = 3;
 
     const animate = (time: number) => {
       const dt = Math.min((time - lastTime) / 1000, 0.1);
@@ -319,6 +320,10 @@ export default function MapView({
             cbRef.current.onVehicleArrived(v.id);
             continue;
           }
+          // Trigger traffic-aware rerouting at this natural node boundary.
+          // Safe: vehicle is EXACTLY at path[segmentIndex], so resetting to
+          // segment 0 of the new path (which starts at that same node) has zero
+          // visual jump. vehiclesRef is synced synchronously inside recalculateVehicle.
           cbRef.current.onRecalcNeeded(v.id, v.path[state.segmentIndex]);
         }
 
@@ -339,7 +344,11 @@ export default function MapView({
 
     frameRef.current = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(frameRef.current);
-  }, [simulationRunning, vehicles, edges]);
+  // 'vehicles' intentionally excluded: animation reads vehiclesRef.current every frame.
+  // Including it would restart the loop on every setVehicles call (arrivals,
+  // navigation flags, assignments) — exactly what causes the multi-vehicle teleport.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [simulationRunning, edges]);
 
   useEffect(() => {
     const map = mapRef.current;
