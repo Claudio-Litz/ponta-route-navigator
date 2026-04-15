@@ -20,6 +20,7 @@ interface ControlPanelProps {
   onUpdateVehicle: (id: string, field: string, value: any) => void;
   onStartSimulation: () => void;
   onStopSimulation: () => void;
+  onExportVehicleLog: (id: string) => void;
 }
 
 const selectClass = 'w-full bg-secondary text-foreground text-xs rounded px-2 py-1.5 border border-border focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50';
@@ -31,6 +32,7 @@ export default function ControlPanel({
   vehicles, simulationRunning,
   onAddVehicle, onRemoveVehicle, onUpdateVehicle,
   onStartSimulation, onStopSimulation,
+  onExportVehicleLog,
 }: ControlPanelProps) {
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -91,9 +93,14 @@ export default function ControlPanel({
                   <span className="text-xs font-medium flex-1">{v.name}</span>
                   {v.status === 'arrived' && <span className="text-[9px] text-primary">✓ Chegou</span>}
                   {v.status === 'stuck' && <span className="text-[9px] text-destructive">✗ Sem rota</span>}
-                  {!simulationRunning && (
-                    <button className="text-muted-foreground hover:text-destructive text-sm leading-none" onClick={() => onRemoveVehicle(v.id)}>×</button>
-                  )}
+                  <div className="flex gap-1">
+                    {v.navigationLogs.length > 0 && (
+                      <button title="Exportar Log TETRA" className="text-primary hover:text-primary/80 text-[10px]" onClick={() => onExportVehicleLog(v.id)}>💾</button>
+                    )}
+                    {!simulationRunning && (
+                      <button className="text-muted-foreground hover:text-destructive text-sm leading-none" onClick={() => onRemoveVehicle(v.id)}>×</button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2">

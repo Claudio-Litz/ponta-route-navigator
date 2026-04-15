@@ -21,6 +21,7 @@ interface MapViewProps {
   onVehicleArrived: (id: string) => void;
   onRecalcNeeded: (vehicleId: string, fromNodeId: string) => void;
   onChangeDestination: (vehicleId: string, newDestId: string, fromNodeId: string) => void;
+  processNavigation: (vehicleId: string, lat: number, lng: number, segmentIndex: number) => void;
   updateEdgeAttribute?: (id: string, field: keyof GraphEdge, value: any) => void;
 }
 
@@ -36,7 +37,7 @@ export default function MapView({
   vehicles, simulationRunning, focusedVehicleId, pois,
   onMapClick, onNodeClick, onNodeRightClick, onEdgeClick,
   onVehicleClick, onVehicleArrived, onRecalcNeeded, onChangeDestination,
-  updateEdgeAttribute,
+  processNavigation, updateEdgeAttribute,
 }: MapViewProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -54,8 +55,8 @@ export default function MapView({
   useEffect(() => { vehiclesRef.current = vehicles; }, [vehicles]);
   const nodesRef = useRef(nodes);
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
-  const cbRef = useRef({ onVehicleArrived, onRecalcNeeded, onVehicleClick, onChangeDestination });
-  useEffect(() => { cbRef.current = { onVehicleArrived, onRecalcNeeded, onVehicleClick, onChangeDestination }; });
+  const cbRef = useRef({ onVehicleArrived, onRecalcNeeded, onVehicleClick, onChangeDestination, processNavigation });
+  useEffect(() => { cbRef.current = { onVehicleArrived, onRecalcNeeded, onVehicleClick, onChangeDestination, processNavigation }; });
   const focusedRef = useRef(focusedVehicleId);
   useEffect(() => { focusedRef.current = focusedVehicleId; }, [focusedVehicleId]);
   const poisRef = useRef(pois);
@@ -171,10 +172,7 @@ export default function MapView({
       } else {
         const line = L.polyline(latlngs, { color: edgeColor, weight, opacity: 0.8, dashArray }).addTo(map);
         line.on('click', (e) => { L.DomEvent.stopPropagation(e); onEdgeClick(edge.id); });
-        
-        // Tooltip com informações da via
         line.bindTooltip(`Lim: ${edge.speedLimit}km/h | Solo: ${edge.groundType}${edge.hasMud ? ' (LAMA)' : ''}<br/>W: ${edge.maxWidth}m | H: ${edge.maxHeight}m`, { sticky: true });
-        
         existing.set(edge.id, line);
       }
       if (!edge.bidirectional && !edge.isBlocked) {
@@ -201,14 +199,12 @@ export default function MapView({
       vehicleMarkersRef.current.forEach((m) => m.remove());
       vehicleMarkersRef.current.clear();
       animStateRef.current.clear();
-      // Clear focus route
       focusRouteRef.current.forEach((l) => l.remove());
       focusRouteRef.current = [];
       if (focusPopupRef.current) { focusPopupRef.current.remove(); focusPopupRef.current = null; }
       return;
     }
 
-    // Create markers for vehicles
     for (const v of vehicles) {
       if ((v.status !== 'moving' && v.status !== 'stuck') || !v.path || v.path.length < 2) continue;
       if (!vehicleMarkersRef.current.has(v.id)) {
@@ -267,7 +263,6 @@ export default function MapView({
         const toNode = nm.get(v.path[state.segmentIndex + 1]);
         if (!fromNode || !toNode) continue;
 
-        // Calcula a velocidade real baseada na via atual
         const edge = edges.find(e => 
           (e.from === fromNode.id && e.to === toNode.id) || 
           (e.bidirectional && e.from === toNode.id && e.to === fromNode.id)
@@ -304,6 +299,9 @@ export default function MapView({
         const lng = fromNode.lng + (toNode.lng - fromNode.lng) * p;
         const marker = vehicleMarkersRef.current.get(v.id);
         if (marker) marker.setLatLng([lat, lng]);
+
+        // Process GPS navigation instructions
+        cbRef.current.processNavigation(v.id, lat, lng, state.segmentIndex);
 
         if (focusedRef.current === v.id && focusPopupRef.current) {
           focusPopupRef.current.setLatLng([lat, lng]);

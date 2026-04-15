@@ -66,6 +66,7 @@ export default function Index() {
         onVehicleArrived={sim.onVehicleArrived}
         onRecalcNeeded={sim.recalculateVehicle}
         onChangeDestination={sim.changeVehicleDestination}
+        processNavigation={sim.processNavigation}
       />
 
       <ControlPanel
@@ -83,6 +84,7 @@ export default function Index() {
         onUpdateVehicle={sim.updateVehicle}
         onStartSimulation={sim.startSimulation}
         onStopSimulation={sim.stopSimulation}
+        onExportVehicleLog={sim.exportVehicleLog}
       />
 
       <RadioConsole logs={sim.logs} />

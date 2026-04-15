@@ -16,7 +16,6 @@ export interface GraphEdge {
   bidirectional: boolean;
   isBlocked: boolean;
   distance: number;
-  // Novos atributos
   groundType: GroundType;
   hasMud: boolean;
   speedLimit: number; // km/h
@@ -27,6 +26,16 @@ export interface GraphEdge {
 export interface GraphData {
   nodes: GraphNode[];
   edges: GraphEdge[];
+}
+
+export type NavigationDirection = 'straight' | 'left' | 'right' | 'return';
+
+export interface NavigationInstruction {
+  type: 'start' | 'turn' | 'arrival';
+  distanceToJunction: number;
+  direction: NavigationDirection;
+  message: string;
+  targetNodeId: string;
 }
 
 export interface Vehicle {
@@ -43,13 +52,19 @@ export interface Vehicle {
   pathVersion: number;
   status: 'idle' | 'moving' | 'arrived' | 'stuck';
   needsRecalc: boolean;
+  // Navigation State
+  instructionIndex: number;
+  spoken500: boolean;
+  spoken100: boolean;
+  spoken50: boolean;
+  navigationLogs: string[]; // Array de JSON strings
 }
 
 export interface LogEntry {
   id: string;
   timestamp: Date;
   message: string;
-  type: 'info' | 'warning' | 'route' | 'block';
+  type: 'info' | 'warning' | 'route' | 'block' | 'navigation';
 }
 
 // === Constants ===
@@ -73,9 +88,29 @@ export function haversine(lat1: number, lng1: number, lat2: number, lng2: number
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-/**
- * Calcula a velocidade real de um veículo em uma via específica.
- */
+export function calculateBearing(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const toDeg = (r: number) => (r * 180) / Math.PI;
+  
+  const y = Math.sin(toRad(lng2 - lng1)) * Math.cos(toRad(lat2));
+  const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+            Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(toRad(lng2 - lng1));
+  const brng = toDeg(Math.atan2(y, x));
+  return (brng + 360) % 360;
+}
+
+export function getRelativeDirection(angle: number): NavigationDirection {
+  // Normalize angle to -180 to 180
+  let normalized = angle;
+  while (normalized > 180) normalized -= 360;
+  while (normalized < -180) normalized += 360;
+
+  if (normalized >= -30 && normalized <= 30) return 'straight';
+  if (normalized > 30 && normalized <= 150) return 'right';
+  if (normalized < -30 && normalized >= -150) return 'left';
+  return 'return';
+}
+
 export function calculateRealSpeed(vehicle: Vehicle, edge: GraphEdge): number {
   const groundFactor = GROUND_FACTORS[edge.groundType] || 1.0;
   let effectiveEdgeLimit = edge.speedLimit * groundFactor;
@@ -87,9 +122,6 @@ export function calculateRealSpeed(vehicle: Vehicle, edge: GraphEdge): number {
   return Math.min(vehicle.speed, effectiveEdgeLimit);
 }
 
-/**
- * Verifica se o veículo pode passar pela via devido a restrições físicas.
- */
 export function canPass(vehicle: Vehicle, edge: GraphEdge): boolean {
   if (edge.isBlocked) return false;
   if (vehicle.width > edge.maxWidth) return false;
@@ -143,7 +175,6 @@ export class Graph {
     for (const edge of this.edges.values()) {
       if (edge.from !== nodeId && !(edge.bidirectional && edge.to === nodeId)) continue;
       
-      // Se um veículo for passado, aplicamos as restrições físicas e de bloqueio
       if (vehicle) {
         if (!canPass(vehicle, edge)) continue;
       } else if (edge.isBlocked) {
@@ -161,7 +192,6 @@ export class Graph {
           if (vehicle) {
             const speedKmh = calculateRealSpeed(vehicle, edge);
             const speedMs = speedKmh / 3.6;
-            // Custo = tempo em segundos (Distância / Velocidade)
             cost = edge.distance / Math.max(speedMs, 0.1);
           }
           results.push({ node: n, cost, edge });
@@ -183,7 +213,6 @@ export class Graph {
     this.edges.clear();
     data.nodes.forEach((n) => this.nodes.set(n.id, n));
     data.edges.forEach((e) => {
-      // Garante retrocompatibilidade se os novos campos não existirem no JSON
       this.edges.set(e.id, {
         groundType: 'asfalto',
         hasMud: false,
@@ -204,7 +233,6 @@ function heuristic(graph: Graph, aId: string, bId: string, vehicle?: Vehicle): n
   const dist = haversine(a.lat, a.lng, b.lat, b.lng);
   
   if (vehicle) {
-    // Heurística baseada em tempo: Distância mínima / Velocidade máxima possível
     return dist / (vehicle.speed / 3.6);
   }
   return dist;
