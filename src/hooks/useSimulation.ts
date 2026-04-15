@@ -7,7 +7,7 @@ import {
 export type AppMode = 'editor' | 'simulation';
 
 const VEHICLE_COLORS = ['#3b82f6', '#f59e0b', '#ec4899', '#8b5cf6', '#06b6d4'];
-const TIME_SCALE = 10;
+const TIME_SCALE = 1;
 
 export function useSimulation() {
   const graphRef = useRef(new Graph());
@@ -289,11 +289,11 @@ export function useSimulation() {
   }, []);
 
   const startSimulation = useCallback(() => {
-    setSimTime(0);
+    // setSimTime is already set by user or defaults to 0
     setVehicles((prev) =>
       prev.map((v) => {
         if (!v.originId || !v.destinationId) return v;
-        const result = findPath(graphRef.current, v.originId, v.destinationId, v, 0);
+        const result = findPath(graphRef.current, v.originId, v.destinationId, v, simTime);
         if (result.success) {
           addLog(`${v.name}: rota calculada (${(result.totalCost / 60).toFixed(1)} min)`, 'route');
           const initialMsg = `Iniciando rota`;
@@ -329,7 +329,7 @@ export function useSimulation() {
     );
     setSimulationRunning(true);
     addLog('▶ Simulação iniciada', 'info');
-  }, [addLog, speak]);
+  }, [addLog, speak, simTime]);
 
   const stopSimulation = useCallback(() => {
     setSimulationRunning(false);
@@ -473,5 +473,6 @@ export function useSimulation() {
     exportMap, importMap,
     exportVehicleLog, processNavigation,
     graphRef,
+    setSimTime,
   };
 }

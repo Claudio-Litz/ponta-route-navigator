@@ -13,7 +13,7 @@ export interface RailwayCrossing {
   enabled: boolean;
   schedules: {
     start: number;    // global simulated time (seconds)
-    duration: number; // seconds
+    end: number;      // global simulated time (seconds)
   }[];
 }
 
@@ -87,6 +87,19 @@ const GROUND_FACTORS: Record<GroundType, number> = {
 const MUD_SPEED_LIMIT = 30; // km/h
 
 // === Helpers ===
+export function secondsToHHMMSS(totalSeconds: number): string {
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = Math.floor(totalSeconds % 60);
+  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+}
+
+export function hhmmssToSeconds(hhmmss: string): number {
+  const parts = hhmmss.split(':').map(Number);
+  if (parts.length !== 3) return 0;
+  return parts[0] * 3600 + parts[1] * 60 + parts[2];
+}
+
 export function haversine(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371000;
   const toRad = (d: number) => (d * Math.PI) / 180;
@@ -141,7 +154,7 @@ export function canPass(vehicle: Vehicle, edge: GraphEdge): boolean {
 export function isRailwayBlocked(edge: GraphEdge, timeSeconds: number): boolean {
   if (!edge.railwayCrossing?.enabled) return false;
   return edge.railwayCrossing.schedules.some(s => 
-    timeSeconds >= s.start && timeSeconds < (s.start + s.duration)
+    timeSeconds >= s.start && timeSeconds < s.end
   );
 }
 
@@ -150,8 +163,8 @@ export function getRailwayWaitTime(edge: GraphEdge, arrivalTime: number): number
   
   let waitTime = 0;
   for (const s of edge.railwayCrossing.schedules) {
-    if (arrivalTime >= s.start && arrivalTime < (s.start + s.duration)) {
-      waitTime = (s.start + s.duration) - arrivalTime;
+    if (arrivalTime >= s.start && arrivalTime < s.end) {
+      waitTime = s.end - arrivalTime;
       break;
     }
   }
@@ -249,14 +262,23 @@ export class Graph {
     this.edges.clear();
     data.nodes.forEach((n) => this.nodes.set(n.id, n));
     data.edges.forEach((e) => {
+      // Migração de dados legados (duration para end)
+      const railwayCrossing = e.railwayCrossing ? {
+        ...e.railwayCrossing,
+        schedules: e.railwayCrossing.schedules?.map((s: any) => ({
+          start: s.start,
+          end: s.end ?? (s.start + (s.duration || 0))
+        })) || []
+      } : { enabled: false, schedules: [] };
+
       this.edges.set(e.id, {
         groundType: 'asfalto',
         hasMud: false,
         speedLimit: 60,
         maxWidth: 5,
         maxHeight: 5,
-        railwayCrossing: { enabled: false, schedules: [] },
-        ...e
+        ...e,
+        railwayCrossing
       });
     });
   }

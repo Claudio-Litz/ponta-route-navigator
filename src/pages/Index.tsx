@@ -3,7 +3,7 @@ import MapView from '@/components/MapView';
 import ControlPanel from '@/components/ControlPanel';
 import RadioConsole from '@/components/RadioConsole';
 import { useSimulation } from '@/hooks/useSimulation';
-import { GraphNode, GraphEdge } from '@/lib/engine';
+import { GraphNode, GraphEdge, secondsToHHMMSS, hhmmssToSeconds } from '@/lib/engine';
 
 export default function Index() {
   const sim = useSimulation();
@@ -47,11 +47,7 @@ export default function Index() {
 
   const inputClass = "bg-secondary border border-border text-foreground text-[11px] rounded px-1.5 py-0.5 w-full outline-none focus:ring-1 focus:ring-primary";
 
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
+  const formatTime = (seconds: number) => secondsToHHMMSS(seconds);
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-background">
@@ -79,7 +75,22 @@ export default function Index() {
       <div className="absolute top-4 left-4 z-30 flex flex-col gap-2">
         <div className="glass-panel px-4 py-2 rounded-lg border border-primary/30">
            <div className="text-[10px] text-primary uppercase tracking-tighter font-bold">Relógio da Simulação</div>
-           <div className="text-2xl font-mono text-foreground tabular-nums">{formatTime(sim.simTime)}</div>
+           {sim.simulationRunning ? (
+             <div className="text-2xl font-mono text-foreground tabular-nums">{formatTime(sim.simTime)}</div>
+           ) : (
+             <input 
+               type="text" 
+               className="text-2xl font-mono bg-transparent text-foreground tabular-nums border-none outline-none focus:ring-0 w-[140px]"
+               value={formatTime(sim.simTime)}
+               onChange={(e) => {
+                 const val = e.target.value;
+                 if (/^\d{0,2}:?\d{0,2}:?\d{0,2}$/.test(val)) {
+                   sim.setSimTime(hhmmssToSeconds(val));
+                 }
+               }}
+               onBlur={(e) => sim.setSimTime(hhmmssToSeconds(e.target.value))}
+             />
+           )}
         </div>
       </div>
 
@@ -135,12 +146,12 @@ export default function Index() {
             <div className="space-y-2 border-b border-border pb-2">
               <div className="flex items-center justify-between gap-2">
                 <label className="text-[10px] text-muted-foreground uppercase">Limite (km/h)</label>
-                <input type="number" className={inputClass + " w-16"} value={contextEdge.speedLimit} 
+                <input type="number" className={inputClass} value={contextEdge.speedLimit} 
                   onChange={(e) => sim.updateEdgeAttribute(contextMenu.id, 'speedLimit', parseInt(e.target.value))} />
               </div>
               <div className="flex items-center justify-between gap-2">
                 <label className="text-[10px] text-muted-foreground uppercase">Solo</label>
-                <select className={inputClass + " w-24"} value={contextEdge.groundType} 
+                <select className={inputClass} value={contextEdge.groundType} 
                   onChange={(e) => sim.updateEdgeAttribute(contextMenu.id, 'groundType', e.target.value)}>
                   <option value="asfalto">Asfalto</option>
                   <option value="terra">Terra</option>
@@ -163,19 +174,19 @@ export default function Index() {
               
               {contextEdge.railwayCrossing?.enabled && (
                 <div className="space-y-2 pt-1">
-                  <div className="text-[9px] text-muted-foreground uppercase font-semibold">Agendamentos (Início | Duração)</div>
+                  <div className="text-[9px] text-muted-foreground uppercase font-semibold">Agendamentos (Início | Fim)</div>
                   {contextEdge.railwayCrossing.schedules.map((s, idx) => (
                     <div key={idx} className="flex gap-1 items-center">
-                      <input type="number" className={inputClass} value={s.start} 
+                      <input type="text" className={inputClass} value={secondsToHHMMSS(s.start)} 
                         onChange={(e) => {
                           const newSchedules = [...contextEdge.railwayCrossing!.schedules];
-                          newSchedules[idx] = { ...s, start: parseInt(e.target.value) || 0 };
+                          newSchedules[idx] = { ...s, start: hhmmssToSeconds(e.target.value) };
                           sim.updateEdgeAttribute(contextMenu.id, 'railwayCrossing', { ...contextEdge.railwayCrossing, schedules: newSchedules });
                         }} />
-                      <input type="number" className={inputClass} value={s.duration} 
+                      <input type="text" className={inputClass} value={secondsToHHMMSS(s.end)} 
                         onChange={(e) => {
                           const newSchedules = [...contextEdge.railwayCrossing!.schedules];
-                          newSchedules[idx] = { ...s, duration: parseInt(e.target.value) || 0 };
+                          newSchedules[idx] = { ...s, end: hhmmssToSeconds(e.target.value) };
                           sim.updateEdgeAttribute(contextMenu.id, 'railwayCrossing', { ...contextEdge.railwayCrossing, schedules: newSchedules });
                         }} />
                       <button className="text-destructive px-1" onClick={() => {
@@ -186,7 +197,7 @@ export default function Index() {
                   ))}
                   <button className="w-full py-1 bg-primary/10 hover:bg-primary/20 text-primary rounded text-[10px]"
                     onClick={() => {
-                      const newSchedules = [...(contextEdge.railwayCrossing?.schedules || []), { start: 0, duration: 60 }];
+                      const newSchedules = [...(contextEdge.railwayCrossing?.schedules || []), { start: 0, end: 3600 }];
                       sim.updateEdgeAttribute(contextMenu.id, 'railwayCrossing', { ...contextEdge.railwayCrossing, schedules: newSchedules });
                     }}>+ Adicionar Bloqueio</button>
                 </div>

@@ -39,7 +39,7 @@ export default function ControlPanel({
   return (
     <div className="absolute top-4 right-4 z-30 w-72 glass-panel rounded-xl p-4 space-y-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
       <div>
-        <h1 className="text-sm font-bold text-primary tracking-wider uppercase">ValeRoute</h1>
+        <h1 className="text-sm font-bold text-primary tracking-wider uppercase">RouteMind</h1>
         <p className="text-[10px] text-muted-foreground">Porto Ponta da Madeira</p>
       </div>
 

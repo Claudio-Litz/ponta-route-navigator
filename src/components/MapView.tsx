@@ -228,7 +228,7 @@ export default function MapView({
     }
 
     let lastTime = performance.now();
-    const TIME_SCALE = 10;
+    const TIME_SCALE = 1;
 
     const animate = (time: number) => {
       const dt = Math.min((time - lastTime) / 1000, 0.1);
