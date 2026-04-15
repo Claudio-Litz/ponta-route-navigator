@@ -24,6 +24,8 @@ interface MapViewProps {
   processNavigation: (vehicleId: string, lat: number, lng: number, segmentIndex: number) => void;
   updateEdgeAttribute?: (id: string, field: keyof GraphEdge, value: any) => void;
   simTime: number;
+  /** Traffic congestion weights from the predictive traffic engine */
+  trafficWeights?: Map<string, number>;
 }
 
 const NODE_COLORS = { POI: '#22c55e', Junction: '#64748b', selected: '#facc15' };
@@ -38,7 +40,7 @@ export default function MapView({
   vehicles, simulationRunning, focusedVehicleId, pois,
   onMapClick, onNodeClick, onNodeRightClick, onEdgeClick,
   onVehicleClick, onVehicleArrived, onRecalcNeeded, onChangeDestination,
-  processNavigation, updateEdgeAttribute, simTime
+  processNavigation, updateEdgeAttribute, simTime, trafficWeights
 }: MapViewProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -46,7 +48,7 @@ export default function MapView({
   const edgeLinesRef = useRef(new Map<string, L.Polyline>());
   const arrowsRef = useRef<L.Polyline[]>([]);
   const vehicleMarkersRef = useRef(new Map<string, L.CircleMarker>());
-  const animStateRef = useRef(new Map<string, { segmentIndex: number; progress: number; pathVersion: number }>());
+  const animStateRef = useRef(new Map<string, { segmentIndex: number; progress: number; pathVersion: number; blockedSegment?: number }>());
   const frameRef = useRef(0);
   const focusRouteRef = useRef<L.Polyline[]>([]);
   const focusPopupRef = useRef<L.Popup | null>(null);
@@ -257,6 +259,7 @@ export default function MapView({
           state.segmentIndex = 0;
           state.progress = 0;
           state.pathVersion = v.pathVersion;
+          state.blockedSegment = undefined; // new path — clear blocked flag
         }
 
         if (state.segmentIndex >= v.path.length - 1) {
@@ -275,8 +278,25 @@ export default function MapView({
           (e.bidirectional && e.to === fromNode.id && e.from === toNode.id)
         );
 
-        if (edge && isRailwayBlocked(edge, currentSimTime)) {
+        // ── BLOCKED EDGE CHECK ─────────────────────────────────────────
+        // Check both hard block and railway crossing timetable
+        const isEdgeBlocked = edge && (edge.isBlocked || isRailwayBlocked(edge, currentSimTime));
+
+        if (isEdgeBlocked) {
+          // Stop the vehicle on this segment
+          if (state.blockedSegment !== state.segmentIndex) {
+            // First frame we detect the block — request an immediate reroute
+            state.blockedSegment = state.segmentIndex;
+            // Recalc from the node at the START of this segment (vehicle may be mid-segment)
+            cbRef.current.onRecalcNeeded(v.id, v.path[state.segmentIndex]);
+          }
+          // Do not advance this frame
           continue;
+        }
+
+        // Edge is passable — clear any previous blocked marker
+        if (state.blockedSegment === state.segmentIndex) {
+          state.blockedSegment = undefined;
         }
 
         let speedKmh = v.speed;
@@ -372,6 +392,49 @@ export default function MapView({
       cbRef.current.onVehicleClick(focusedVehicleId);
     });
   }, [focusedVehicleId, simulationRunning, vehicles]);
+
+  // ── Traffic congestion visualization ──────────────────────────────────────
+  // Updates edge colors reactively when the traffic engine emits new weights.
+  // Keeps this separate from the main edge effect to avoid expensive re-renders.
+  useEffect(() => {
+    const tw = trafficWeights;
+    if (!tw) return;
+
+    for (const [edgeId, line] of edgeLinesRef.current) {
+      const edge = edges.find(e => e.id === edgeId);
+      if (!edge || edge.isBlocked) continue; // blocked edges keep their red color
+
+      const fwdKey = `${edge.from}->${edge.to}`;
+      const bwdKey = `${edge.to}->${edge.from}`;
+      const weight = Math.max(
+        tw.get(fwdKey) ?? 0,
+        edge.bidirectional ? (tw.get(bwdKey) ?? 0) : 0
+      );
+
+      if (weight > 0) {
+        // Orange = moderate (peso 0–2), Red = heavy (peso > 2)
+        const congestionColor = weight >= 2 ? '#ef4444' : '#f97316';
+        line.setStyle({ color: congestionColor, weight: 5, opacity: 0.95 });
+      } else {
+        // Restore baseline color when congestion clears
+        const baseColor = edge.hasMud ? '#78350f' : GROUND_COLORS[edge.groundType];
+        line.setStyle({ color: baseColor, weight: edge.hasMud ? 5 : 3, opacity: 0.8 });
+      }
+    }
+
+    // Highlight intersection nodes with a slightly larger ring
+    for (const [nodeId, marker] of nodeMarkersRef.current) {
+      const node = nodes.find(n => n.id === nodeId);
+      if (!node) continue;
+      const isSelected = marker.options.fillColor === NODE_COLORS.selected;
+      if (isSelected) continue; // keep selection highlight
+      if (node.isIntersection) {
+        marker.setStyle({ radius: 8, weight: 2.5, color: '#a78bfa' }); // purple ring
+      } else {
+        marker.setStyle({ radius: node.type === 'POI' ? 8 : 6, weight: 2, color: '#1e293b' });
+      }
+    }
+  }, [trafficWeights, edges, nodes]);
 
   return (
     <div

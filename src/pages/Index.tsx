@@ -70,6 +70,7 @@ export default function Index() {
         onChangeDestination={sim.changeVehicleDestination}
         processNavigation={sim.processNavigation}
         simTime={sim.simTime}
+        trafficWeights={sim.trafficWeights}
       />
 
       <div className="absolute top-4 left-4 z-30 flex flex-col gap-2">
@@ -110,6 +111,9 @@ export default function Index() {
         onStartSimulation={sim.startSimulation}
         onStopSimulation={sim.stopSimulation}
         onExportVehicleLog={sim.exportVehicleLog}
+        missions={sim.missions}
+        onAddMission={sim.addMission}
+        onRemoveMission={sim.removeMission}
       />
 
       <RadioConsole logs={sim.logs} />
@@ -150,6 +154,16 @@ export default function Index() {
                   onChange={(e) => sim.updateEdgeAttribute(contextMenu.id, 'speedLimit', parseInt(e.target.value))} />
               </div>
               <div className="flex items-center justify-between gap-2">
+                <label className="text-[10px] text-muted-foreground uppercase">Larg. Máx (m)</label>
+                <input type="number" step="0.1" min="0.5" className={inputClass} value={contextEdge.maxWidth}
+                  onChange={(e) => sim.updateEdgeAttribute(contextMenu.id, 'maxWidth', parseFloat(e.target.value))} />
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-[10px] text-muted-foreground uppercase">Alt. Máx (m)</label>
+                <input type="number" step="0.1" min="0.5" className={inputClass} value={contextEdge.maxHeight}
+                  onChange={(e) => sim.updateEdgeAttribute(contextMenu.id, 'maxHeight', parseFloat(e.target.value))} />
+              </div>
+              <div className="flex items-center justify-between gap-2">
                 <label className="text-[10px] text-muted-foreground uppercase">Solo</label>
                 <select className={inputClass} value={contextEdge.groundType} 
                   onChange={(e) => sim.updateEdgeAttribute(contextMenu.id, 'groundType', e.target.value)}>
@@ -163,7 +177,14 @@ export default function Index() {
                 <input type="checkbox" checked={contextEdge.hasMud} 
                   onChange={(e) => sim.updateEdgeAttribute(contextMenu.id, 'hasMud', e.target.checked)} />
               </div>
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-[10px] text-muted-foreground uppercase font-semibold text-amber-400">Janela Tráfego (s)</label>
+                <input type="number" step="1" min="1" className={inputClass}
+                  value={Math.round((contextEdge.trafficTimeWindow ?? 20000) / 1000)}
+                  onChange={(e) => sim.updateEdgeAttribute(contextMenu.id, 'trafficTimeWindow', parseInt(e.target.value) * 1000)} />
+              </div>
             </div>
+
 
             <div className="space-y-2 border-b border-border pb-2">
               <div className="flex items-center justify-between gap-2">
