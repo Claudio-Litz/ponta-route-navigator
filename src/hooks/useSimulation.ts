@@ -263,17 +263,6 @@ export function useSimulation() {
     if (edge) { edge.bidirectional = !edge.bidirectional; sync(); }
   }, [sync]);
 
-  const toggleEdgeBlock = useCallback((id: string) => {
-    const edge = graphRef.current.edges.get(id);
-    if (edge) {
-      edge.isBlocked = !edge.isBlocked;
-      sync();
-      if (simulationRunningRef.current) {
-        setVehicles(prev => prev.map(v => ({ ...v, needsRecalc: true })));
-        addLog(`Via ${edge.isBlocked ? 'bloqueada' : 'desbloqueada'}, recalculando rotas...`, 'block');
-      }
-    }
-  }, [sync, addLog]);
 
   const updateEdgeAttribute = useCallback((id: string, field: keyof GraphEdge, value: any) => {
     const edge = graphRef.current.edges.get(id);
@@ -737,12 +726,19 @@ export function useSimulation() {
   const recalculateVehicle = useCallback((vehicleId: string, fromNodeId: string) => {
     // Read directly from ref — always current, no React closure lag
     const vehicle = vehiclesRef.current.find(v => v.id === vehicleId);
-    if (!vehicle || vehicle.status !== 'moving') return;
+    if (!vehicle) return;
+    // Allow recalc for moving OR waiting (blocked-waiting) vehicles
+    if (vehicle.status !== 'moving' && vehicle.status !== 'stuck') return;
 
     const mission = missionsRef.current.find(m => m.id === vehicle.currentMissionId);
     const priority: MissionPriority = mission?.priority ?? 'medium';
+
+    // Preserve the last known waiting node so we can retry from there
+    const recalcFrom = fromNodeId || vehicle.lastKnownNodeId || vehicle.originId;
+    if (!recalcFrom || !vehicle.destinationId) return;
+
     const result = findPath(
-      graphRef.current, fromNodeId, vehicle.destinationId,
+      graphRef.current, recalcFrom, vehicle.destinationId,
       vehicle, simTimeRef.current, trafficWeightsRef.current, priority
     );
 
@@ -752,11 +748,16 @@ export function useSimulation() {
         vehicle.path &&
         vehicle.path.length === result.path.length &&
         result.path.every((id, i) => id === vehicle.path![i]);
-      if (sameRoute) return;
+      if (sameRoute && vehicle.status === 'moving') return;
 
       const pivotName = result.path.length > 1
         ? (graphRef.current.nodes.get(result.path[1])?.name ?? '?') : '?';
-      addLog(`${vehicle.name}: rota recalculada via ${pivotName}`, 'route');
+
+      if (vehicle.status === 'stuck') {
+        addLog(`🟢 ${vehicle.name}: rota liberada! Retomando via ${pivotName}`, 'route');
+      } else {
+        addLog(`${vehicle.name}: rota recalculada via ${pivotName}`, 'route');
+      }
 
       const updated: Vehicle = {
         ...vehicle,
@@ -769,6 +770,7 @@ export function useSimulation() {
         currentTotalTime: result.totalCost,
         routeWithETA: buildRouteWithETA(graphRef.current, result.path, vehicle, simTimeRef.current),
         currentRouteIndex: 0,
+        lastKnownNodeId: recalcFrom,
       };
       // Sync ref IMMEDIATELY so the animation loop picks up the new pathVersion
       // on the very next rAF frame — not one React render cycle later.
@@ -776,13 +778,39 @@ export function useSimulation() {
       vehiclesRef.current = newVehicles;
       setVehicles(newVehicles);
     } else {
-      addLog(`${vehicle.name}: SEM ROTA ALTERNATIVA!`, 'block');
-      const updated = { ...vehicle, status: 'stuck' as const, needsRecalc: false };
+      // No alternative route — put vehicle in 'stuck' state but KEEP destination
+      // so it will retry automatically when the route is freed.
+      if (vehicle.status !== 'stuck') {
+        addLog(`⏸ ${vehicle.name}: sem rota alternativa, aguardando liberação...`, 'block');
+      }
+      const updated = {
+        ...vehicle,
+        status: 'stuck' as const,
+        needsRecalc: false,
+        lastKnownNodeId: fromNodeId || vehicle.lastKnownNodeId,
+      };
       const newVehicles = vehiclesRef.current.map(v => v.id === vehicleId ? updated : v);
       vehiclesRef.current = newVehicles;
       setVehicles(newVehicles);
     }
   }, [addLog]);
+
+  // ── Periodic retry for stuck/waiting vehicles ─────────────────────────────
+  // Every 2 real seconds, try to find a route for vehicles that are stuck.
+  // This ensures they resume automatically when a blocked edge is freed.
+  useEffect(() => {
+    if (!simulationRunning) return;
+    const id = setInterval(() => {
+      const stuckVehicles = vehiclesRef.current.filter(
+        v => v.status === 'stuck' && v.destinationId && (v.lastKnownNodeId || v.originId)
+      );
+      for (const v of stuckVehicles) {
+        const fromNode = v.lastKnownNodeId || v.originId;
+        if (fromNode) recalculateVehicle(v.id, fromNode);
+      }
+    }, 2000);
+    return () => clearInterval(id);
+  }, [simulationRunning, recalculateVehicle]);
 
   // ── Vehicle arrival ───────────────────────────────────────────────────────
 
@@ -922,6 +950,33 @@ export function useSimulation() {
   }, [addLog]);
 
   // ── Import / Export ───────────────────────────────────────────────────────
+
+  const toggleEdgeBlock = useCallback((id: string) => {
+    const edge = graphRef.current.edges.get(id);
+    if (edge) {
+      edge.isBlocked = !edge.isBlocked;
+      sync();
+      if (simulationRunningRef.current) {
+        const isNowUnblocked = !edge.isBlocked;
+        setVehicles(prev => prev.map(v => ({ ...v, needsRecalc: true })));
+        addLog(`Via ${edge.isBlocked ? 'bloqueada' : 'desbloqueada'}, recalculando rotas...`, 'block');
+
+        // When an edge is freed, immediately retry stuck vehicles so they resume ASAP
+        if (isNowUnblocked) {
+          setTimeout(() => {
+            const stuckVehicles = vehiclesRef.current.filter(
+              v => v.status === 'stuck' && v.destinationId && (v.lastKnownNodeId || v.originId)
+            );
+            for (const v of stuckVehicles) {
+              const fromNode = v.lastKnownNodeId || v.originId;
+              if (fromNode) recalculateVehicle(v.id, fromNode);
+            }
+          }, 50);
+        }
+      }
+    }
+  }, [sync, addLog, recalculateVehicle]);
+
 
   const exportMap = useCallback(() => {
     const data = graphRef.current.exportData();

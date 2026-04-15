@@ -102,6 +102,8 @@ export interface Vehicle {
   // Predictive traffic / ETA
   routeWithETA: RouteWithETA;
   currentRouteIndex: number;
+  /** Last confirmed graph node the vehicle reached — used as retry origin when stuck */
+  lastKnownNodeId?: string;
 }
 
 // === Mission ===

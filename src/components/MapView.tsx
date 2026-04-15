@@ -245,8 +245,9 @@ export default function MapView({
         if (v.status !== 'moving' || !v.path || v.path.length < 2) {
           if (v.status === 'arrived' || v.status === 'idle') {
             const m = vehicleMarkersRef.current.get(v.id);
-            if (m) { m.remove(); vehicleMarkersRef.current.delete(v.id); }
+            if (m) { m.remove(); vehicleMarkersRef.current.delete(v.id); animStateRef.current.delete(v.id); }
           }
+          // 'stuck' vehicles keep their marker — they are frozen in place waiting
           continue;
         }
 
@@ -314,6 +315,7 @@ export default function MapView({
         if (state.progress >= 1) {
           state.segmentIndex++;
           state.progress = 0;
+          state.blockedSegment = undefined; // cleared a segment — unblock flag
           if (state.segmentIndex >= v.path.length - 1) {
             const dest = nm.get(v.path[v.path.length - 1]);
             if (dest) vehicleMarkersRef.current.get(v.id)?.setLatLng([dest.lat, dest.lng]);
