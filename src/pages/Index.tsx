@@ -3,7 +3,7 @@ import MapView from '@/components/MapView';
 import ControlPanel from '@/components/ControlPanel';
 import RadioConsole from '@/components/RadioConsole';
 import { useSimulation } from '@/hooks/useSimulation';
-import { GraphNode } from '@/lib/engine';
+import { GraphNode, GraphEdge } from '@/lib/engine';
 
 export default function Index() {
   const sim = useSimulation();
@@ -47,6 +47,12 @@ export default function Index() {
 
   const inputClass = "bg-secondary border border-border text-foreground text-[11px] rounded px-1.5 py-0.5 w-full outline-none focus:ring-1 focus:ring-primary";
 
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-background">
       <MapView
@@ -67,7 +73,15 @@ export default function Index() {
         onRecalcNeeded={sim.recalculateVehicle}
         onChangeDestination={sim.changeVehicleDestination}
         processNavigation={sim.processNavigation}
+        simTime={sim.simTime}
       />
+
+      <div className="absolute top-4 left-4 z-30 flex flex-col gap-2">
+        <div className="glass-panel px-4 py-2 rounded-lg border border-primary/30">
+           <div className="text-[10px] text-primary uppercase tracking-tighter font-bold">Relógio da Simulação</div>
+           <div className="text-2xl font-mono text-foreground tabular-nums">{formatTime(sim.simTime)}</div>
+        </div>
+      </div>
 
       <ControlPanel
         mode={sim.mode}
@@ -117,7 +131,7 @@ export default function Index() {
       {contextMenu && contextEdge && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setContextMenu(null)} />
-          <div className="fixed z-50 glass-panel rounded-lg p-3 min-w-[220px] text-xs shadow-xl space-y-3" style={{ left: contextMenu.x, top: contextMenu.y }}>
+          <div className="fixed z-50 glass-panel rounded-lg p-3 min-w-[240px] text-xs shadow-xl space-y-3 max-h-[400px] overflow-y-auto" style={{ left: contextMenu.x, top: contextMenu.y }}>
             <div className="space-y-2 border-b border-border pb-2">
               <div className="flex items-center justify-between gap-2">
                 <label className="text-[10px] text-muted-foreground uppercase">Limite (km/h)</label>
@@ -142,15 +156,41 @@ export default function Index() {
 
             <div className="space-y-2 border-b border-border pb-2">
               <div className="flex items-center justify-between gap-2">
-                <label className="text-[10px] text-muted-foreground uppercase">Largura Máx (m)</label>
-                <input type="number" step="0.1" className={inputClass + " w-16"} value={contextEdge.maxWidth} 
-                  onChange={(e) => sim.updateEdgeAttribute(contextMenu.id, 'maxWidth', parseFloat(e.target.value))} />
+                <label className="text-[10px] text-muted-foreground uppercase font-bold text-primary">Passagem de Nível</label>
+                <input type="checkbox" checked={contextEdge.railwayCrossing?.enabled} 
+                  onChange={(e) => sim.updateEdgeAttribute(contextMenu.id, 'railwayCrossing', { ...contextEdge.railwayCrossing, enabled: e.target.checked })} />
               </div>
-              <div className="flex items-center justify-between gap-2">
-                <label className="text-[10px] text-muted-foreground uppercase">Altura Máx (m)</label>
-                <input type="number" step="0.1" className={inputClass + " w-16"} value={contextEdge.maxHeight} 
-                  onChange={(e) => sim.updateEdgeAttribute(contextMenu.id, 'maxHeight', parseFloat(e.target.value))} />
-              </div>
+              
+              {contextEdge.railwayCrossing?.enabled && (
+                <div className="space-y-2 pt-1">
+                  <div className="text-[9px] text-muted-foreground uppercase font-semibold">Agendamentos (Início | Duração)</div>
+                  {contextEdge.railwayCrossing.schedules.map((s, idx) => (
+                    <div key={idx} className="flex gap-1 items-center">
+                      <input type="number" className={inputClass} value={s.start} 
+                        onChange={(e) => {
+                          const newSchedules = [...contextEdge.railwayCrossing!.schedules];
+                          newSchedules[idx] = { ...s, start: parseInt(e.target.value) || 0 };
+                          sim.updateEdgeAttribute(contextMenu.id, 'railwayCrossing', { ...contextEdge.railwayCrossing, schedules: newSchedules });
+                        }} />
+                      <input type="number" className={inputClass} value={s.duration} 
+                        onChange={(e) => {
+                          const newSchedules = [...contextEdge.railwayCrossing!.schedules];
+                          newSchedules[idx] = { ...s, duration: parseInt(e.target.value) || 0 };
+                          sim.updateEdgeAttribute(contextMenu.id, 'railwayCrossing', { ...contextEdge.railwayCrossing, schedules: newSchedules });
+                        }} />
+                      <button className="text-destructive px-1" onClick={() => {
+                        const newSchedules = contextEdge.railwayCrossing!.schedules.filter((_, i) => i !== idx);
+                        sim.updateEdgeAttribute(contextMenu.id, 'railwayCrossing', { ...contextEdge.railwayCrossing, schedules: newSchedules });
+                      }}>×</button>
+                    </div>
+                  ))}
+                  <button className="w-full py-1 bg-primary/10 hover:bg-primary/20 text-primary rounded text-[10px]"
+                    onClick={() => {
+                      const newSchedules = [...(contextEdge.railwayCrossing?.schedules || []), { start: 0, duration: 60 }];
+                      sim.updateEdgeAttribute(contextMenu.id, 'railwayCrossing', { ...contextEdge.railwayCrossing, schedules: newSchedules });
+                    }}>+ Adicionar Bloqueio</button>
+                </div>
+              )}
             </div>
 
             <div className="space-y-1">

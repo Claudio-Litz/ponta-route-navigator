@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { 
   Graph, GraphNode, GraphEdge, GraphData, Vehicle, LogEntry, findPath, 
   haversine, calculateBearing, getRelativeDirection, NavigationDirection 
@@ -7,6 +7,7 @@ import {
 export type AppMode = 'editor' | 'simulation';
 
 const VEHICLE_COLORS = ['#3b82f6', '#f59e0b', '#ec4899', '#8b5cf6', '#06b6d4'];
+const TIME_SCALE = 10;
 
 export function useSimulation() {
   const graphRef = useRef(new Graph());
@@ -18,6 +19,29 @@ export function useSimulation() {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [simulationRunning, setSimulationRunning] = useState(false);
   const [focusedVehicleId, setFocusedVehicleId] = useState<string | null>(null);
+  
+  // Global Clock
+  const [simTime, setSimTime] = useState(0);
+  const lastRealTimeRef = useRef<number>(0);
+
+  useEffect(() => {
+    let frame: number;
+    const tick = () => {
+      if (simulationRunning) {
+        const now = Date.now();
+        if (lastRealTimeRef.current > 0) {
+          const dt = (now - lastRealTimeRef.current) / 1000;
+          setSimTime(prev => prev + dt * TIME_SCALE);
+        }
+        lastRealTimeRef.current = now;
+      } else {
+        lastRealTimeRef.current = 0;
+      }
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [simulationRunning]);
 
   const addLog = useCallback((message: string, type: LogEntry['type'] = 'info') => {
     setLogs((prev) => [
@@ -27,10 +51,9 @@ export function useSimulation() {
   }, []);
 
   const speak = useCallback((text: string, vehicleId?: string) => {
-    // Only speak if it's the focused vehicle or no vehicle is focused (system alerts)
     if (focusedVehicleId && vehicleId && focusedVehicleId !== vehicleId) return;
-    
     if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
       u.lang = 'pt-BR';
       u.rate = 1.1;
@@ -71,7 +94,6 @@ export function useSimulation() {
     const path = vehicle.path;
     const nm = graphRef.current.nodes;
 
-    // Find next "Junction" node in path after current segment
     let nextJunctionIndex = -1;
     for (let i = segmentIndex + 1; i < path.length; i++) {
       const node = nm.get(path[i]);
@@ -88,7 +110,6 @@ export function useSimulation() {
 
     const distance = haversine(currentLat, currentLng, targetNode.lat, targetNode.lng);
     
-    // Determine direction at this junction
     let direction: NavigationDirection = 'straight';
     if (nextJunctionIndex > 0 && nextJunctionIndex < path.length - 1) {
       const prevNode = nm.get(path[nextJunctionIndex - 1]);
@@ -99,7 +120,7 @@ export function useSimulation() {
         direction = getRelativeDirection(b2 - b1);
       }
     } else if (nextJunctionIndex === path.length - 1) {
-      direction = 'straight'; // Arrival
+      direction = 'straight';
     }
 
     const directionText = {
@@ -109,9 +130,7 @@ export function useSimulation() {
       return: 'faça o retorno'
     }[direction];
 
-    // Trigger logic
     if (nextJunctionIndex !== vehicle.instructionIndex) {
-      // New junction target, reset flags
       setVehicles(prev => prev.map(v => v.id === vehicleId ? {
         ...v,
         instructionIndex: nextJunctionIndex,
@@ -136,18 +155,19 @@ export function useSimulation() {
 
   const exportVehicleLog = useCallback((vehicleId: string) => {
     const vehicle = vehicles.find(v => v.id === vehicleId);
-    if (!vehicle) return;
+    if (!vehicle || vehicle.navigationLogs.length === 0) return;
     const content = vehicle.navigationLogs.join('\n');
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = `log_${vehicle.name.replace(/\s+/g, '_')}.txt`;
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }, [vehicles]);
 
-  // === Graph editing ===
   const addNode = useCallback((lat: number, lng: number, type: GraphNode['type']) => {
     const count = graphRef.current.nodes.size + 1;
     const node: GraphNode = {
@@ -231,7 +251,6 @@ export function useSimulation() {
     }
   }, [sync]);
 
-  // === Vehicles ===
   const addVehicle = useCallback(() => {
     setVehicles((prev) => {
       const count = prev.length + 1;
@@ -269,15 +288,15 @@ export function useSimulation() {
     );
   }, []);
 
-  // === Simulation ===
   const startSimulation = useCallback(() => {
+    setSimTime(0);
     setVehicles((prev) =>
       prev.map((v) => {
         if (!v.originId || !v.destinationId) return v;
-        const result = findPath(graphRef.current, v.originId, v.destinationId, v);
+        const result = findPath(graphRef.current, v.originId, v.destinationId, v, 0);
         if (result.success) {
           addLog(`${v.name}: rota calculada (${(result.totalCost / 60).toFixed(1)} min)`, 'route');
-          
+          const initialMsg = `Iniciando rota`;
           const vehicleWithRoute = { 
             ...v, 
             path: result.path, 
@@ -288,11 +307,9 @@ export function useSimulation() {
             spoken500: false,
             spoken100: false,
             spoken50: false,
-            navigationLogs: []
+            navigationLogs: [],
+            currentTotalTime: result.totalCost
           };
-          
-          // Initial instruction
-          const initialMsg = `Iniciando rota. Tempo estimado: ${(result.totalCost / 60).toFixed(1)} minutos`;
           const tetra = {
             vehicle_id: v.id,
             type: 'navigation',
@@ -303,10 +320,9 @@ export function useSimulation() {
           };
           vehicleWithRoute.navigationLogs.push(JSON.stringify(tetra));
           speak(initialMsg, v.id);
-
           return vehicleWithRoute;
         } else {
-          addLog(`${v.name}: rota não encontrada (restrições físicas ou bloqueio)!`, 'warning');
+          addLog(`${v.name}: rota não encontrada!`, 'warning');
           return { ...v, path: null, status: 'stuck' as const };
         }
       })
@@ -329,18 +345,22 @@ export function useSimulation() {
         navigationLogs: []
       }))
     );
-    addLog('■ Simulação parada — sistema resetado', 'info');
+    addLog('■ Simulação parada', 'info');
   }, [addLog]);
 
   const recalculateVehicle = useCallback((vehicleId: string, fromNodeId: string) => {
     setVehicles((prev) =>
       prev.map((v) => {
         if (v.id !== vehicleId) return v;
-        const result = findPath(graphRef.current, fromNodeId, v.destinationId, v);
+        const result = findPath(graphRef.current, fromNodeId, v.destinationId, v, simTime);
         if (result.success) {
+          // Check stability: only update if new route is at least 10% faster
+          if (v.currentTotalTime && result.totalCost >= v.currentTotalTime * 0.9) {
+             return { ...v, needsRecalc: false };
+          }
+
           const pivotName = graphRef.current.nodes.get(result.path[1])?.name ?? '?';
-          addLog(`${v.name}: rota recalculada via ${pivotName} (${(result.totalCost / 60).toFixed(1)} min)`, 'route');
-          speak(`Veículo ${v.name}, nova rota via ${pivotName}.`, v.id);
+          addLog(`${v.name}: rota recalculada via ${pivotName}`, 'route');
           return { 
             ...v, 
             path: result.path, 
@@ -350,16 +370,16 @@ export function useSimulation() {
             instructionIndex: -1,
             spoken500: false,
             spoken100: false,
-            spoken50: false
+            spoken50: false,
+            currentTotalTime: result.totalCost
           };
         } else {
-          addLog(`${v.name}: SEM ROTA ALTERNATIVA DISPONÍVEL!`, 'block');
-          speak(`Atenção, veículo ${v.name}, sem rota alternativa disponível.`, v.id);
+          addLog(`${v.name}: SEM ROTA ALTERNATIVA!`, 'block');
           return { ...v, status: 'stuck' as const, needsRecalc: false };
         }
       })
     );
-  }, [addLog, speak]);
+  }, [addLog, simTime]);
 
   const onVehicleArrived = useCallback((vehicleId: string) => {
     setVehicles((prev) =>
@@ -367,7 +387,6 @@ export function useSimulation() {
         if (v.id !== vehicleId || v.status === 'arrived') return v;
         const msg = `Você chegou ao seu destino`;
         addLog(`✓ ${v.name}: ${msg}`, 'route');
-        
         const tetra = {
           vehicle_id: v.id,
           type: 'navigation',
@@ -376,7 +395,6 @@ export function useSimulation() {
           message: msg,
           timestamp: new Date().toISOString()
         };
-        
         speak(msg, v.id);
         return { 
           ...v, 
@@ -391,10 +409,9 @@ export function useSimulation() {
     setVehicles((prev) =>
       prev.map((v) => {
         if (v.id !== vehicleId) return v;
-        const result = findPath(graphRef.current, fromNodeId, newDestId, v);
+        const result = findPath(graphRef.current, fromNodeId, newDestId, v, simTime);
         if (result.success) {
-          addLog(`${v.name}: destino alterado, nova rota calculada`, 'route');
-          speak(`Veículo ${v.name}, destino atualizado.`, v.id);
+          addLog(`${v.name}: destino alterado`, 'route');
           return { 
             ...v, 
             destinationId: newDestId, 
@@ -405,7 +422,8 @@ export function useSimulation() {
             instructionIndex: -1,
             spoken500: false,
             spoken100: false,
-            spoken50: false
+            spoken50: false,
+            currentTotalTime: result.totalCost
           };
         } else {
           addLog(`${v.name}: sem rota para novo destino!`, 'warning');
@@ -413,9 +431,8 @@ export function useSimulation() {
         }
       })
     );
-  }, [addLog, speak]);
+  }, [addLog, simTime]);
 
-  // === Import/Export ===
   const exportMap = useCallback(() => {
     const data = graphRef.current.exportData();
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -425,7 +442,7 @@ export function useSimulation() {
     a.download = 'ponta_route_grid.json';
     a.click();
     URL.revokeObjectURL(url);
-    addLog('Malha exportada: ponta_route_grid.json');
+    addLog('Malha exportada');
   }, [addLog]);
 
   const importMap = useCallback((file: File) => {
@@ -435,9 +452,9 @@ export function useSimulation() {
         const data: GraphData = JSON.parse(e.target?.result as string);
         graphRef.current.importData(data);
         sync();
-        addLog(`Malha importada: ${data.nodes.length} nós, ${data.edges.length} vias`);
+        addLog(`Malha importada`);
       } catch {
-        addLog('Erro ao importar arquivo', 'warning');
+        addLog('Erro ao importar', 'warning');
       }
     };
     reader.readAsText(file);
@@ -446,6 +463,7 @@ export function useSimulation() {
   return {
     nodes, edges, mode, setMode, selectedNodes, logs,
     vehicles, simulationRunning, focusedVehicleId, setFocusedVehicleId,
+    simTime,
     addNode, removeNode, selectNodeForEdge,
     toggleEdgeDirection, toggleEdgeBlock, updateEdgeAttribute, removeEdge,
     updateNodeName, updateNodeType,

@@ -9,6 +9,14 @@ export interface GraphNode {
   type: 'POI' | 'Junction';
 }
 
+export interface RailwayCrossing {
+  enabled: boolean;
+  schedules: {
+    start: number;    // global simulated time (seconds)
+    duration: number; // seconds
+  }[];
+}
+
 export interface GraphEdge {
   id: string;
   from: string;
@@ -21,6 +29,7 @@ export interface GraphEdge {
   speedLimit: number; // km/h
   maxWidth: number;   // metros
   maxHeight: number;  // metros
+  railwayCrossing?: RailwayCrossing;
 }
 
 export interface GraphData {
@@ -58,6 +67,7 @@ export interface Vehicle {
   spoken100: boolean;
   spoken50: boolean;
   navigationLogs: string[]; // Array de JSON strings
+  currentTotalTime?: number; // Tempo total da rota atual em segundos
 }
 
 export interface LogEntry {
@@ -100,7 +110,6 @@ export function calculateBearing(lat1: number, lng1: number, lat2: number, lng2:
 }
 
 export function getRelativeDirection(angle: number): NavigationDirection {
-  // Normalize angle to -180 to 180
   let normalized = angle;
   while (normalized > 180) normalized -= 360;
   while (normalized < -180) normalized += 360;
@@ -127,6 +136,26 @@ export function canPass(vehicle: Vehicle, edge: GraphEdge): boolean {
   if (vehicle.width > edge.maxWidth) return false;
   if (vehicle.height > edge.maxHeight) return false;
   return true;
+}
+
+export function isRailwayBlocked(edge: GraphEdge, timeSeconds: number): boolean {
+  if (!edge.railwayCrossing?.enabled) return false;
+  return edge.railwayCrossing.schedules.some(s => 
+    timeSeconds >= s.start && timeSeconds < (s.start + s.duration)
+  );
+}
+
+export function getRailwayWaitTime(edge: GraphEdge, arrivalTime: number): number {
+  if (!edge.railwayCrossing?.enabled) return 0;
+  
+  let waitTime = 0;
+  for (const s of edge.railwayCrossing.schedules) {
+    if (arrivalTime >= s.start && arrivalTime < (s.start + s.duration)) {
+      waitTime = (s.start + s.duration) - arrivalTime;
+      break;
+    }
+  }
+  return waitTime;
 }
 
 // === Graph ===
@@ -161,6 +190,7 @@ export class Graph {
       speedLimit: 60,
       maxWidth: 5,
       maxHeight: 5,
+      railwayCrossing: { enabled: false, schedules: [] }
     };
     this.edges.set(edge.id, edge);
     return edge;
@@ -170,7 +200,7 @@ export class Graph {
     this.edges.delete(id);
   }
 
-  getNeighbors(nodeId: string, vehicle?: Vehicle): { node: GraphNode; cost: number; edge: GraphEdge }[] {
+  getNeighbors(nodeId: string, vehicle?: Vehicle, currentTime?: number): { node: GraphNode; cost: number; edge: GraphEdge }[] {
     const results: { node: GraphNode; cost: number; edge: GraphEdge }[] = [];
     for (const edge of this.edges.values()) {
       if (edge.from !== nodeId && !(edge.bidirectional && edge.to === nodeId)) continue;
@@ -192,7 +222,13 @@ export class Graph {
           if (vehicle) {
             const speedKmh = calculateRealSpeed(vehicle, edge);
             const speedMs = speedKmh / 3.6;
-            cost = edge.distance / Math.max(speedMs, 0.1);
+            const travelTime = edge.distance / Math.max(speedMs, 0.1);
+            
+            let waitTime = 0;
+            if (currentTime !== undefined) {
+              waitTime = getRailwayWaitTime(edge, currentTime);
+            }
+            cost = travelTime + waitTime;
           }
           results.push({ node: n, cost, edge });
         }
@@ -219,6 +255,7 @@ export class Graph {
         speedLimit: 60,
         maxWidth: 5,
         maxHeight: 5,
+        railwayCrossing: { enabled: false, schedules: [] },
         ...e
       });
     });
@@ -242,7 +279,8 @@ export function findPath(
   graph: Graph,
   startId: string,
   goalId: string,
-  vehicle?: Vehicle
+  vehicle?: Vehicle,
+  startTime: number = 0
 ): { path: string[]; totalCost: number; success: boolean } {
   if (!graph.nodes.has(startId) || !graph.nodes.has(goalId)) {
     return { path: [], totalCost: 0, success: false };
@@ -275,8 +313,11 @@ export function findPath(
     }
 
     openSet.delete(current);
-    for (const { node: neighbor, cost } of graph.getNeighbors(current, vehicle)) {
-      const tentativeG = (gScore.get(current) ?? Infinity) + cost;
+    const currentG = gScore.get(current) ?? Infinity;
+    const currentTime = startTime + currentG;
+
+    for (const { node: neighbor, cost } of graph.getNeighbors(current, vehicle, currentTime)) {
+      const tentativeG = currentG + cost;
       if (tentativeG < (gScore.get(neighbor.id) ?? Infinity)) {
         cameFrom.set(neighbor.id, current);
         gScore.set(neighbor.id, tentativeG);

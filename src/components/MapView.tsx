@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { GraphNode, GraphEdge, Vehicle, haversine, GroundType } from '@/lib/engine';
+import { GraphNode, GraphEdge, Vehicle, haversine, GroundType, isRailwayBlocked } from '@/lib/engine';
 import { AppMode } from '@/hooks/useSimulation';
 
 interface MapViewProps {
@@ -23,6 +23,7 @@ interface MapViewProps {
   onChangeDestination: (vehicleId: string, newDestId: string, fromNodeId: string) => void;
   processNavigation: (vehicleId: string, lat: number, lng: number, segmentIndex: number) => void;
   updateEdgeAttribute?: (id: string, field: keyof GraphEdge, value: any) => void;
+  simTime: number;
 }
 
 const NODE_COLORS = { POI: '#22c55e', Junction: '#64748b', selected: '#facc15' };
@@ -37,7 +38,7 @@ export default function MapView({
   vehicles, simulationRunning, focusedVehicleId, pois,
   onMapClick, onNodeClick, onNodeRightClick, onEdgeClick,
   onVehicleClick, onVehicleArrived, onRecalcNeeded, onChangeDestination,
-  processNavigation, updateEdgeAttribute,
+  processNavigation, updateEdgeAttribute, simTime
 }: MapViewProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -50,7 +51,6 @@ export default function MapView({
   const focusRouteRef = useRef<L.Polyline[]>([]);
   const focusPopupRef = useRef<L.Popup | null>(null);
 
-  // Stable refs for animation loop
   const vehiclesRef = useRef(vehicles);
   useEffect(() => { vehiclesRef.current = vehicles; }, [vehicles]);
   const nodesRef = useRef(nodes);
@@ -61,8 +61,11 @@ export default function MapView({
   useEffect(() => { focusedRef.current = focusedVehicleId; }, [focusedVehicleId]);
   const poisRef = useRef(pois);
   useEffect(() => { poisRef.current = pois; }, [pois]);
+  const edgesRef = useRef(edges);
+  useEffect(() => { edgesRef.current = edges; }, [edges]);
+  const simTimeRef = useRef(simTime);
+  useEffect(() => { simTimeRef.current = simTime; }, [simTime]);
 
-  // Build node lookup map
   const nodeMapRef = useRef(new Map<string, GraphNode>());
   useEffect(() => {
     const m = new Map<string, GraphNode>();
@@ -70,7 +73,6 @@ export default function MapView({
     nodeMapRef.current = m;
   }, [nodes]);
 
-  // 1. Initialize map
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
     const map = L.map(mapContainerRef.current, {
@@ -80,10 +82,9 @@ export default function MapView({
     });
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap',
-    }).addTo(map);
+    } ).addTo(map);
     L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-    // Event delegation for vehicle destination select
     mapContainerRef.current.addEventListener('change', (e) => {
       const target = e.target as HTMLSelectElement;
       if (target.id?.startsWith('vdest-')) {
@@ -104,7 +105,6 @@ export default function MapView({
     return () => { map.remove(); mapRef.current = null; };
   }, []);
 
-  // 2. Map click
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -115,7 +115,6 @@ export default function MapView({
     return () => { map.off('click', handler); };
   }, [mode, onMapClick]);
 
-  // 3. Draw nodes
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -144,7 +143,6 @@ export default function MapView({
     }
   }, [nodes, selectedNodes, onNodeClick, onNodeRightClick]);
 
-  // 4. Draw edges
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -161,9 +159,16 @@ export default function MapView({
       if (!fromNode || !toNode) continue;
       const latlngs: L.LatLngExpression[] = [[fromNode.lat, fromNode.lng], [toNode.lat, toNode.lng]];
       
-      const edgeColor = edge.isBlocked ? '#ef4444' : (edge.hasMud ? '#78350f' : GROUND_COLORS[edge.groundType]);
-      const dashArray = edge.isBlocked ? '8, 8' : undefined;
-      const weight = edge.hasMud ? 5 : 3;
+      let edgeColor = edge.isBlocked ? '#ef4444' : (edge.hasMud ? '#78350f' : GROUND_COLORS[edge.groundType]);
+      let weight = edge.hasMud ? 5 : 3;
+      let dashArray = edge.isBlocked ? '8, 8' : undefined;
+
+      if (edge.railwayCrossing?.enabled) {
+        const isBlocked = isRailwayBlocked(edge, simTime);
+        edgeColor = isBlocked ? '#facc15' : '#fbbf24';
+        weight = 6;
+        dashArray = '10, 5';
+      }
 
       if (existing.has(edge.id)) {
         const line = existing.get(edge.id)!;
@@ -172,7 +177,7 @@ export default function MapView({
       } else {
         const line = L.polyline(latlngs, { color: edgeColor, weight, opacity: 0.8, dashArray }).addTo(map);
         line.on('click', (e) => { L.DomEvent.stopPropagation(e); onEdgeClick(edge.id); });
-        line.bindTooltip(`Lim: ${edge.speedLimit}km/h | Solo: ${edge.groundType}${edge.hasMud ? ' (LAMA)' : ''}<br/>W: ${edge.maxWidth}m | H: ${edge.maxHeight}m`, { sticky: true });
+        line.bindTooltip(`${edge.railwayCrossing?.enabled ? '[TREM] ' : ''}Lim: ${edge.speedLimit}km/h | Solo: ${edge.groundType}${edge.hasMud ? ' (LAMA)' : ''}`, { sticky: true });
         existing.set(edge.id, line);
       }
       if (!edge.bidirectional && !edge.isBlocked) {
@@ -187,9 +192,8 @@ export default function MapView({
         arrowsRef.current.push(arrow);
       }
     }
-  }, [edges, nodes, onEdgeClick]);
+  }, [edges, nodes, onEdgeClick, simTime]);
 
-  // 5. Vehicle animation
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -224,11 +228,14 @@ export default function MapView({
     }
 
     let lastTime = performance.now();
+    const TIME_SCALE = 10;
 
     const animate = (time: number) => {
       const dt = Math.min((time - lastTime) / 1000, 0.1);
       lastTime = time;
       const currentVehicles = vehiclesRef.current;
+      const currentEdges = edgesRef.current;
+      const currentSimTime = simTimeRef.current;
       const nm = nodeMapRef.current;
 
       for (const v of currentVehicles) {
@@ -263,11 +270,15 @@ export default function MapView({
         const toNode = nm.get(v.path[state.segmentIndex + 1]);
         if (!fromNode || !toNode) continue;
 
-        const edge = edges.find(e => 
+        const edge = currentEdges.find(e => 
           (e.from === fromNode.id && e.to === toNode.id) || 
-          (e.bidirectional && e.from === toNode.id && e.to === fromNode.id)
+          (e.bidirectional && e.to === fromNode.id && e.from === toNode.id)
         );
-        
+
+        if (edge && isRailwayBlocked(edge, currentSimTime)) {
+          continue;
+        }
+
         let speedKmh = v.speed;
         if (edge) {
           const groundFactor = edge.groundType === 'asfalto' ? 1.0 : (edge.groundType === 'terra' ? 0.7 : 0.5);
@@ -277,7 +288,7 @@ export default function MapView({
 
         const dist = haversine(fromNode.lat, fromNode.lng, toNode.lat, toNode.lng);
         const speedMs = speedKmh * 1000 / 3600;
-        state.progress += (speedMs * dt) / Math.max(dist, 1);
+        state.progress += (speedMs * dt * TIME_SCALE) / Math.max(dist, 1);
 
         if (state.progress >= 1) {
           state.segmentIndex++;
@@ -288,10 +299,7 @@ export default function MapView({
             cbRef.current.onVehicleArrived(v.id);
             continue;
           }
-          if (v.needsRecalc) {
-            cbRef.current.onRecalcNeeded(v.id, v.path[state.segmentIndex]);
-            continue;
-          }
+          cbRef.current.onRecalcNeeded(v.id, v.path[state.segmentIndex]);
         }
 
         const p = Math.min(state.progress, 1);
@@ -300,7 +308,6 @@ export default function MapView({
         const marker = vehicleMarkersRef.current.get(v.id);
         if (marker) marker.setLatLng([lat, lng]);
 
-        // Process GPS navigation instructions
         cbRef.current.processNavigation(v.id, lat, lng, state.segmentIndex);
 
         if (focusedRef.current === v.id && focusPopupRef.current) {
@@ -314,7 +321,6 @@ export default function MapView({
     return () => cancelAnimationFrame(frameRef.current);
   }, [simulationRunning, vehicles, edges]);
 
-  // 6. Focus: route line + popup
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;

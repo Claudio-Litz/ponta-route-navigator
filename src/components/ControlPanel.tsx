@@ -95,7 +95,13 @@ export default function ControlPanel({
                   {v.status === 'stuck' && <span className="text-[9px] text-destructive">✗ Sem rota</span>}
                   <div className="flex gap-1">
                     {v.navigationLogs.length > 0 && (
-                      <button title="Exportar Log TETRA" className="text-primary hover:text-primary/80 text-[10px]" onClick={() => onExportVehicleLog(v.id)}>💾</button>
+                      <button 
+                        title="Exportar Log TETRA (JSON)" 
+                        className="text-primary hover:text-primary/80 text-[14px] leading-none" 
+                        onClick={() => onExportVehicleLog(v.id)}
+                      >
+                        💾
+                      </button>
                     )}
                     {!simulationRunning && (
                       <button className="text-muted-foreground hover:text-destructive text-sm leading-none" onClick={() => onRemoveVehicle(v.id)}>×</button>
