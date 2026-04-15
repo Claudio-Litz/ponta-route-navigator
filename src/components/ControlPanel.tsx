@@ -3,7 +3,6 @@ import { GraphNode, Vehicle } from '@/lib/engine';
 import { AppMode } from '@/hooks/useSimulation';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
-import { Volume2, VolumeX } from 'lucide-react';
 
 interface ControlPanelProps {
   mode: AppMode;
@@ -21,9 +20,6 @@ interface ControlPanelProps {
   onUpdateVehicle: (id: string, field: string, value: any) => void;
   onStartSimulation: () => void;
   onStopSimulation: () => void;
-  // Voice
-  isGlobalMuted: boolean;
-  setIsGlobalMuted: (m: boolean) => void;
 }
 
 const selectClass = 'w-full bg-secondary text-foreground text-xs rounded px-2 py-1.5 border border-border focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50';
@@ -35,20 +31,14 @@ export default function ControlPanel({
   vehicles, simulationRunning,
   onAddVehicle, onRemoveVehicle, onUpdateVehicle,
   onStartSimulation, onStopSimulation,
-  isGlobalMuted, setIsGlobalMuted,
 }: ControlPanelProps) {
   const fileRef = useRef<HTMLInputElement>(null);
 
   return (
     <div className="absolute top-4 right-4 z-30 w-72 glass-panel rounded-xl p-4 space-y-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-sm font-bold text-primary tracking-wider uppercase">ValeRoute GPS</h1>
-          <p className="text-[10px] text-muted-foreground">Porto Ponta da Madeira</p>
-        </div>
-        <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setIsGlobalMuted(!isGlobalMuted)}>
-          {isGlobalMuted ? <VolumeX className="h-4 w-4 text-destructive" /> : <Volume2 className="h-4 w-4 text-primary" />}
-        </Button>
+      <div>
+        <h1 className="text-sm font-bold text-primary tracking-wider uppercase">ValeRoute</h1>
+        <p className="text-[10px] text-muted-foreground">Porto Ponta da Madeira</p>
       </div>
 
       <div className="flex gap-1">
@@ -66,13 +56,12 @@ export default function ControlPanel({
         <>
           <div className="space-y-1">
             <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Tipo de Nó</label>
-            <div className="flex flex-wrap gap-1">
-              <Button size="sm" variant={nodeType === 'POI' ? 'default' : 'secondary'} className="flex-1 text-[10px]" onClick={() => setNodeType('POI')}>POI</Button>
-              <Button size="sm" variant={nodeType === 'Junction' ? 'default' : 'secondary'} className="flex-1 text-[10px]" onClick={() => setNodeType('Junction')}>Junção</Button>
-              <Button size="sm" variant={nodeType === 'Crossroad' ? 'default' : 'secondary'} className="flex-1 text-[10px]" onClick={() => setNodeType('Crossroad')}>Cruzamento</Button>
+            <div className="flex gap-1">
+              <Button size="sm" variant={nodeType === 'POI' ? 'default' : 'secondary'} className="flex-1 text-xs" onClick={() => setNodeType('POI')}>POI</Button>
+              <Button size="sm" variant={nodeType === 'Junction' ? 'default' : 'secondary'} className="flex-1 text-xs" onClick={() => setNodeType('Junction')}>Junção</Button>
             </div>
           </div>
-          <p className="text-[10px] text-muted-foreground italic">Clique no mapa para criar nós. Clique em 2 nós para conectar. Clique direito para configurar ângulos em Cruzamentos.</p>
+          <p className="text-[10px] text-muted-foreground">Clique no mapa para criar nós. Clique em 2 nós para conectar. Clique direito para opções.</p>
           <div className="flex gap-1">
             <Button size="sm" variant="secondary" className="flex-1 text-xs" onClick={onExport}>Exportar</Button>
             <Button size="sm" variant="secondary" className="flex-1 text-xs" onClick={() => fileRef.current?.click()}>Importar</Button>
@@ -100,9 +89,8 @@ export default function ControlPanel({
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: v.color }} />
                   <span className="text-xs font-medium flex-1">{v.name}</span>
-                  <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => onUpdateVehicle(v.id, 'isMuted', !v.isMuted)}>
-                    {v.isMuted ? <VolumeX className="h-3 w-3 text-destructive" /> : <Volume2 className="h-3 w-3 text-muted-foreground" />}
-                  </Button>
+                  {v.status === 'arrived' && <span className="text-[9px] text-primary">✓ Chegou</span>}
+                  {v.status === 'stuck' && <span className="text-[9px] text-destructive">✗ Sem rota</span>}
                   {!simulationRunning && (
                     <button className="text-muted-foreground hover:text-destructive text-sm leading-none" onClick={() => onRemoveVehicle(v.id)}>×</button>
                   )}

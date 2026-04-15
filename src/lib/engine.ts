@@ -1,21 +1,12 @@
 // === Types ===
 export type GroundType = 'asfalto' | 'terra' | 'brita';
-export type NodeType = 'POI' | 'Junction' | 'Crossroad';
-export type InstructionType = 'start' | 'move' | 'turn' | 'arrival' | 'recalculation';
-export type DirectionType = 'straight' | 'right' | 'left' | 'u-turn' | 'generic';
-
-export interface NodeConnection {
-  to: string;
-  angle: number; // 0-359 graus
-}
 
 export interface GraphNode {
   id: string;
   name: string;
   lat: number;
   lng: number;
-  type: NodeType;
-  connections?: NodeConnection[]; // Usado para Crossroad
+  type: 'POI' | 'Junction';
 }
 
 export interface GraphEdge {
@@ -25,6 +16,7 @@ export interface GraphEdge {
   bidirectional: boolean;
   isBlocked: boolean;
   distance: number;
+  // Novos atributos
   groundType: GroundType;
   hasMud: boolean;
   speedLimit: number; // km/h
@@ -35,14 +27,6 @@ export interface GraphEdge {
 export interface GraphData {
   nodes: GraphNode[];
   edges: GraphEdge[];
-}
-
-export interface VoiceInstruction {
-  type: InstructionType;
-  direction?: DirectionType;
-  distance?: number;
-  message: string;
-  timestamp: number;
 }
 
 export interface Vehicle {
@@ -59,18 +43,13 @@ export interface Vehicle {
   pathVersion: number;
   status: 'idle' | 'moving' | 'arrived' | 'stuck';
   needsRecalc: boolean;
-  isMuted: boolean; // Mute individual do veículo
 }
 
 export interface LogEntry {
   id: string;
   timestamp: Date;
   message: string;
-  type: 'info' | 'warning' | 'route' | 'block' | 'voice';
-  instruction?: {
-    vehicle_id: string;
-    instruction: VoiceInstruction;
-  };
+  type: 'info' | 'warning' | 'route' | 'block';
 }
 
 // === Constants ===
@@ -94,13 +73,23 @@ export function haversine(lat1: number, lng1: number, lat2: number, lng2: number
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+/**
+ * Calcula a velocidade real de um veículo em uma via específica.
+ */
 export function calculateRealSpeed(vehicle: Vehicle, edge: GraphEdge): number {
   const groundFactor = GROUND_FACTORS[edge.groundType] || 1.0;
   let effectiveEdgeLimit = edge.speedLimit * groundFactor;
-  if (edge.hasMud) effectiveEdgeLimit = Math.min(effectiveEdgeLimit, MUD_SPEED_LIMIT);
+  
+  if (edge.hasMud) {
+    effectiveEdgeLimit = Math.min(effectiveEdgeLimit, MUD_SPEED_LIMIT);
+  }
+
   return Math.min(vehicle.speed, effectiveEdgeLimit);
 }
 
+/**
+ * Verifica se o veículo pode passar pela via devido a restrições físicas.
+ */
 export function canPass(vehicle: Vehicle, edge: GraphEdge): boolean {
   if (edge.isBlocked) return false;
   if (vehicle.width > edge.maxWidth) return false;
@@ -108,23 +97,15 @@ export function canPass(vehicle: Vehicle, edge: GraphEdge): boolean {
   return true;
 }
 
-export function getDirectionFromAngles(inAngle: number, outAngle: number, connectionsCount: number): { direction: DirectionType; message: string } {
-  if (connectionsCount > 6) {
-    return { direction: 'generic', message: 'Siga pelo acesso indicado' };
-  }
-  let delta = (outAngle - inAngle + 540) % 360 - 180;
-  if (Math.abs(delta) < 30) return { direction: 'straight', message: 'Siga em frente' };
-  if (delta >= 30 && delta < 150) return { direction: 'right', message: 'Vire à direita' };
-  if (delta <= -30 && delta > -150) return { direction: 'left', message: 'Vire à esquerda' };
-  return { direction: 'u-turn', message: 'Faça o retorno' };
-}
-
 // === Graph ===
 export class Graph {
   nodes: Map<string, GraphNode> = new Map();
   edges: Map<string, GraphEdge> = new Map();
 
-  addNode(node: GraphNode) { this.nodes.set(node.id, node); }
+  addNode(node: GraphNode) {
+    this.nodes.set(node.id, node);
+  }
+
   removeNode(id: string) {
     this.nodes.delete(id);
     for (const [eid, edge] of this.edges) {
@@ -153,22 +134,34 @@ export class Graph {
     return edge;
   }
 
-  removeEdge(id: string) { this.edges.delete(id); }
+  removeEdge(id: string) {
+    this.edges.delete(id);
+  }
 
   getNeighbors(nodeId: string, vehicle?: Vehicle): { node: GraphNode; cost: number; edge: GraphEdge }[] {
     const results: { node: GraphNode; cost: number; edge: GraphEdge }[] = [];
     for (const edge of this.edges.values()) {
       if (edge.from !== nodeId && !(edge.bidirectional && edge.to === nodeId)) continue;
-      if (vehicle) { if (!canPass(vehicle, edge)) continue; } else if (edge.isBlocked) continue;
+      
+      // Se um veículo for passado, aplicamos as restrições físicas e de bloqueio
+      if (vehicle) {
+        if (!canPass(vehicle, edge)) continue;
+      } else if (edge.isBlocked) {
+        continue;
+      }
+
       let neighborId: string | null = null;
       if (edge.from === nodeId) neighborId = edge.to;
       else if (edge.bidirectional && edge.to === nodeId) neighborId = edge.from;
+
       if (neighborId) {
         const n = this.nodes.get(neighborId);
         if (n) {
           let cost = edge.distance;
           if (vehicle) {
-            const speedMs = calculateRealSpeed(vehicle, edge) / 3.6;
+            const speedKmh = calculateRealSpeed(vehicle, edge);
+            const speedMs = speedKmh / 3.6;
+            // Custo = tempo em segundos (Distância / Velocidade)
             cost = edge.distance / Math.max(speedMs, 0.1);
           }
           results.push({ node: n, cost, edge });
@@ -178,45 +171,92 @@ export class Graph {
     return results;
   }
 
-  exportData(): GraphData { return { nodes: Array.from(this.nodes.values()), edges: Array.from(this.edges.values()) }; }
+  exportData(): GraphData {
+    return {
+      nodes: Array.from(this.nodes.values()),
+      edges: Array.from(this.edges.values()),
+    };
+  }
+
   importData(data: GraphData) {
-    this.nodes.clear(); this.edges.clear();
+    this.nodes.clear();
+    this.edges.clear();
     data.nodes.forEach((n) => this.nodes.set(n.id, n));
-    data.edges.forEach((e) => this.edges.set(e.id, { groundType: 'asfalto', hasMud: false, speedLimit: 60, maxWidth: 5, maxHeight: 5, ...e }));
+    data.edges.forEach((e) => {
+      // Garante retrocompatibilidade se os novos campos não existirem no JSON
+      this.edges.set(e.id, {
+        groundType: 'asfalto',
+        hasMud: false,
+        speedLimit: 60,
+        maxWidth: 5,
+        maxHeight: 5,
+        ...e
+      });
+    });
   }
 }
 
 // === A* Pathfinding ===
 function heuristic(graph: Graph, aId: string, bId: string, vehicle?: Vehicle): number {
-  const a = graph.nodes.get(aId); const b = graph.nodes.get(bId);
+  const a = graph.nodes.get(aId);
+  const b = graph.nodes.get(bId);
   if (!a || !b) return Infinity;
   const dist = haversine(a.lat, a.lng, b.lat, b.lng);
-  return vehicle ? dist / (vehicle.speed / 3.6) : dist;
+  
+  if (vehicle) {
+    // Heurística baseada em tempo: Distância mínima / Velocidade máxima possível
+    return dist / (vehicle.speed / 3.6);
+  }
+  return dist;
 }
 
-export function findPath(graph: Graph, startId: string, goalId: string, vehicle?: Vehicle): { path: string[]; totalCost: number; success: boolean } {
-  if (!graph.nodes.has(startId) || !graph.nodes.has(goalId)) return { path: [], totalCost: 0, success: false };
+export function findPath(
+  graph: Graph,
+  startId: string,
+  goalId: string,
+  vehicle?: Vehicle
+): { path: string[]; totalCost: number; success: boolean } {
+  if (!graph.nodes.has(startId) || !graph.nodes.has(goalId)) {
+    return { path: [], totalCost: 0, success: false };
+  }
+
   const openSet = new Set([startId]);
   const cameFrom = new Map<string, string>();
   const gScore = new Map<string, number>([[startId, 0]]);
   const fScore = new Map<string, number>([[startId, heuristic(graph, startId, goalId, vehicle)]]);
+
   while (openSet.size > 0) {
-    let current = ''; let lowestF = Infinity;
-    for (const id of openSet) { const f = fScore.get(id) ?? Infinity; if (f < lowestF) { lowestF = f; current = id; } }
+    let current = '';
+    let lowestF = Infinity;
+    for (const id of openSet) {
+      const f = fScore.get(id) ?? Infinity;
+      if (f < lowestF) {
+        lowestF = f;
+        current = id;
+      }
+    }
+
     if (current === goalId) {
-      const path: string[] = [current]; let c = current;
-      while (cameFrom.has(c)) { c = cameFrom.get(c)!; path.unshift(c); }
+      const path: string[] = [current];
+      let c = current;
+      while (cameFrom.has(c)) {
+        c = cameFrom.get(c)!;
+        path.unshift(c);
+      }
       return { path, totalCost: gScore.get(goalId) ?? 0, success: true };
     }
+
     openSet.delete(current);
     for (const { node: neighbor, cost } of graph.getNeighbors(current, vehicle)) {
       const tentativeG = (gScore.get(current) ?? Infinity) + cost;
       if (tentativeG < (gScore.get(neighbor.id) ?? Infinity)) {
-        cameFrom.set(neighbor.id, current); gScore.set(neighbor.id, tentativeG);
+        cameFrom.set(neighbor.id, current);
+        gScore.set(neighbor.id, tentativeG);
         fScore.set(neighbor.id, tentativeG + heuristic(graph, neighbor.id, goalId, vehicle));
         openSet.add(neighbor.id);
       }
     }
   }
+
   return { path: [], totalCost: 0, success: false };
 }

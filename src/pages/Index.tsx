@@ -66,8 +66,6 @@ export default function Index() {
         onVehicleArrived={sim.onVehicleArrived}
         onRecalcNeeded={sim.recalculateVehicle}
         onChangeDestination={sim.changeVehicleDestination}
-        onVoiceTrigger={sim.handleVoiceTrigger}
-        setFocusedVehicleId={sim.setFocusedVehicleId}
       />
 
       <ControlPanel
@@ -85,8 +83,6 @@ export default function Index() {
         onUpdateVehicle={sim.updateVehicle}
         onStartSimulation={sim.startSimulation}
         onStopSimulation={sim.stopSimulation}
-        isGlobalMuted={sim.isGlobalMuted}
-        setIsGlobalMuted={sim.setIsGlobalMuted}
       />
 
       <RadioConsole logs={sim.logs} />
@@ -95,7 +91,7 @@ export default function Index() {
       {contextMenu && contextNode && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setContextMenu(null)} />
-          <div className="fixed z-50 glass-panel rounded-lg py-1 min-w-[220px] text-xs shadow-xl" style={{ left: contextMenu.x, top: contextMenu.y }}>
+          <div className="fixed z-50 glass-panel rounded-lg py-1 min-w-[180px] text-xs shadow-xl" style={{ left: contextMenu.x, top: contextMenu.y }}>
             <div className="px-3 py-1.5 border-b border-border">
               <input type="text" defaultValue={contextNode.name}
                 className="bg-transparent border-b border-primary text-foreground text-xs w-full outline-none"
@@ -103,40 +99,10 @@ export default function Index() {
                 onKeyDown={(e) => { if (e.key === 'Enter') { sim.updateNodeName(contextMenu.id, (e.target as HTMLInputElement).value); setContextMenu(null); } }}
                 autoFocus />
             </div>
-            
-            <div className="px-3 py-2 space-y-2">
-              <label className="text-[10px] text-muted-foreground uppercase">Tipo de Nó</label>
-              <select className={inputClass} value={contextNode.type} onChange={(e) => sim.updateNodeType(contextMenu.id, e.target.value as any)}>
-                <option value="POI">POI</option>
-                <option value="Junction">Junção</option>
-                <option value="Crossroad">Cruzamento</option>
-              </select>
-            </div>
-
-            {contextNode.type === 'Crossroad' && (
-              <div className="px-3 py-2 border-t border-border space-y-2 max-h-48 overflow-y-auto">
-                <label className="text-[10px] text-muted-foreground uppercase">Ângulos de Conexão</label>
-                {sim.edges.filter(e => e.from === contextNode.id || (e.bidirectional && e.to === contextNode.id)).map(e => {
-                  const targetId = e.from === contextNode.id ? e.to : e.from;
-                  const targetNode = sim.nodes.find(n => n.id === targetId);
-                  const conn = contextNode.connections?.find(c => c.to === targetId);
-                  return (
-                    <div key={e.id} className="flex items-center justify-between gap-2">
-                      <span className="text-[10px] truncate w-20">{targetNode?.name}</span>
-                      <input type="number" className={inputClass + " w-16"} value={conn?.angle || 0}
-                        onChange={(ev) => {
-                          const newConns = [...(contextNode.connections || [])];
-                          const idx = newConns.findIndex(c => c.to === targetId);
-                          if (idx >= 0) newConns[idx].angle = parseInt(ev.target.value);
-                          else newConns.push({ to: targetId, angle: parseInt(ev.target.value) });
-                          sim.updateNodeAttribute(contextNode.id, 'connections', newConns);
-                        }} />
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
+            <button className="w-full px-3 py-1.5 text-left text-foreground hover:bg-secondary"
+              onClick={() => { sim.updateNodeType(contextMenu.id, contextNode.type === 'POI' ? 'Junction' : 'POI'); setContextMenu(null); }}>
+              Alternar para {contextNode.type === 'POI' ? 'Junção' : 'POI'}
+            </button>
             <div className="border-t border-border my-1" />
             <button className="w-full px-3 py-1.5 text-left text-destructive hover:bg-secondary"
               onClick={() => { sim.removeNode(contextMenu.id); setContextMenu(null); }}>
@@ -169,6 +135,19 @@ export default function Index() {
                 <label className="text-[10px] text-muted-foreground uppercase">Lama</label>
                 <input type="checkbox" checked={contextEdge.hasMud} 
                   onChange={(e) => sim.updateEdgeAttribute(contextMenu.id, 'hasMud', e.target.checked)} />
+              </div>
+            </div>
+
+            <div className="space-y-2 border-b border-border pb-2">
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-[10px] text-muted-foreground uppercase">Largura Máx (m)</label>
+                <input type="number" step="0.1" className={inputClass + " w-16"} value={contextEdge.maxWidth} 
+                  onChange={(e) => sim.updateEdgeAttribute(contextMenu.id, 'maxWidth', parseFloat(e.target.value))} />
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-[10px] text-muted-foreground uppercase">Altura Máx (m)</label>
+                <input type="number" step="0.1" className={inputClass + " w-16"} value={contextEdge.maxHeight} 
+                  onChange={(e) => sim.updateEdgeAttribute(contextMenu.id, 'maxHeight', parseFloat(e.target.value))} />
               </div>
             </div>
 
