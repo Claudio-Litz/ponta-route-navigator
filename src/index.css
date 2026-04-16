@@ -9,51 +9,54 @@ All colors MUST be HSL.
 
 @layer base {
   :root {
-    --background: 222 47% 5%;
-    --foreground: 210 40% 92%;
+    --background: 0 0% 98%;
+    --foreground: 167 20% 20%;
 
-    --card: 222 47% 8%;
-    --card-foreground: 210 40% 92%;
+    --card: 0 0% 100%;
+    --card-foreground: 167 20% 20%;
 
-    --popover: 222 47% 8%;
-    --popover-foreground: 210 40% 92%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 167 20% 20%;
 
-    --primary: 142 71% 45%;
-    --primary-foreground: 222 47% 5%;
+    /* Vale Primary Green */
+    --primary: 167 100% 25%;
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 222 30% 14%;
-    --secondary-foreground: 210 40% 92%;
+    /* Vale Yellow for secondary */
+    --secondary: 47 100% 50%;
+    --secondary-foreground: 167 20% 10%;
 
-    --muted: 222 30% 14%;
-    --muted-foreground: 215 20% 55%;
+    --muted: 167 10% 92%;
+    --muted-foreground: 167 10% 45%;
 
-    --accent: 142 71% 45%;
-    --accent-foreground: 222 47% 5%;
+    --accent: 47 100% 50%;
+    --accent-foreground: 167 20% 10%;
 
     --destructive: 0 84% 60%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 222 30% 18%;
-    --input: 222 30% 18%;
-    --ring: 142 71% 45%;
+    --border: 167 10% 85%;
+    --input: 167 10% 85%;
+    --ring: 167 100% 25%;
 
-    --radius: 0.75rem;
+    --radius: 0.5rem;
 
-    --neon-green: 142 71% 45%;
-    --neon-glow: 0 0 12px hsl(142 71% 45% / 0.6);
+    --neon-green: 167 100% 25%;
+    --neon-glow: 0 0 12px hsl(167 100% 25% / 0.3);
     --alert-red: 0 84% 60%;
-    --alert-glow: 0 0 12px hsl(0 84% 60% / 0.6);
-    --glass-bg: 222 47% 8% / 0.7;
-    --glass-border: 222 30% 25% / 0.5;
+    --alert-glow: 0 0 12px hsl(0 84% 60% / 0.3);
+    
+    --glass-bg: 0 0% 100% / 0.85;
+    --glass-border: 167 10% 85% / 0.6;
 
-    --sidebar-background: 222 47% 6%;
-    --sidebar-foreground: 210 40% 92%;
-    --sidebar-primary: 142 71% 45%;
-    --sidebar-primary-foreground: 222 47% 5%;
-    --sidebar-accent: 222 30% 14%;
-    --sidebar-accent-foreground: 210 40% 92%;
-    --sidebar-border: 222 30% 18%;
-    --sidebar-ring: 142 71% 45%;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 167 20% 20%;
+    --sidebar-primary: 167 100% 25%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 167 10% 92%;
+    --sidebar-accent-foreground: 167 20% 20%;
+    --sidebar-border: 167 10% 85%;
+    --sidebar-ring: 167 100% 25%;
   }
 }
 
@@ -62,51 +65,53 @@ body {
 }
 
 .leaflet-tile-pane {
-  filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
+  filter: saturate(1.1) contrast(1.05) brightness(1.02);
 }
 
 .neon-glow-line {
-  filter: drop-shadow(0 0 6px hsl(142 71% 45% / 0.8));
+  filter: drop-shadow(0 0 3px hsl(167 100% 25% / 0.5));
 }
 
 .blocked-glow-line {
-  filter: drop-shadow(0 0 6px hsl(0 84% 60% / 0.8));
+  filter: drop-shadow(0 0 3px hsl(0 84% 60% / 0.5));
 }
 
 .glass-panel {
   background: hsl(var(--glass-bg));
-  backdrop-filter: blur(16px);
+  backdrop-filter: blur(12px);
   border: 1px solid hsl(var(--glass-border));
+  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05); /* clean soft shadow */
 }
 
 .leaflet-container {
-  background: hsl(222 47% 5%) !important;
+  background: hsl(0 0% 98%) !important;
 }
 
 .node-tooltip {
-  background: hsl(222 47% 8% / 0.9) !important;
-  border: 1px solid hsl(222 30% 25%) !important;
-  color: hsl(210 40% 92%) !important;
+  background: hsl(0 0% 100% / 0.95) !important;
+  border: 1px solid hsl(167 10% 85%) !important;
+  color: hsl(167 20% 20%) !important;
   font-size: 11px !important;
   padding: 2px 6px !important;
   border-radius: 4px !important;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.06) !important;
 }
 
 .vehicle-popup .leaflet-popup-content-wrapper {
-  background: hsl(222 47% 8% / 0.95);
-  border: 1px solid hsl(222 30% 25% / 0.5);
-  backdrop-filter: blur(16px);
-  border-radius: 8px;
-  color: #e2e8f0;
-  box-shadow: 0 0 20px rgba(0,0,0,0.5);
+  background: hsl(0 0% 100% / 0.95);
+  border: 1px solid hsl(167 10% 85% / 0.8);
+  backdrop-filter: blur(8px);
+  border-radius: 6px;
+  color: hsl(167 20% 20%);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
 }
 
 .vehicle-popup .leaflet-popup-tip {
-  background: hsl(222 47% 8% / 0.95);
+  background: hsl(0 0% 100% / 0.95);
 }
 
 .vehicle-popup .leaflet-popup-close-button {
-  color: #94a3b8 !important;
+  color: hsl(167 10% 45%) !important;
 }
 
 /* Custom scrollbar */
@@ -114,11 +119,14 @@ body {
   width: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: hsl(222 47% 5%);
+  background: hsl(0 0% 98%);
 }
 ::-webkit-scrollbar-thumb {
-  background: hsl(222 30% 25%);
+  background: hsl(167 10% 80%);
   border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(167 10% 60%);
 }
 
 @layer base {
