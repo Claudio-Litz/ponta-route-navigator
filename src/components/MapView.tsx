@@ -1,8 +1,9 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { GraphNode, GraphEdge, Vehicle, haversine, GroundType, isRailwayBlocked } from '@/lib/engine';
 import { AppMode } from '@/hooks/useSimulation';
+import { Map as MapIcon, Globe } from 'lucide-react';
 
 interface MapViewProps {
   nodes: GraphNode[];
@@ -42,8 +43,10 @@ export default function MapView({
   onVehicleClick, onVehicleArrived, onRecalcNeeded, onChangeDestination,
   processNavigation, updateEdgeAttribute, simTime, trafficWeights
 }: MapViewProps) {
+  const [isSatellite, setIsSatellite] = useState(false);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
+  const tileLayerRef = useRef<L.TileLayer | null>(null);
   const nodeMarkersRef = useRef(new Map<string, L.CircleMarker>());
   const edgeLinesRef = useRef(new Map<string, L.Polyline>());
   const arrowsRef = useRef<L.Polyline[]>([]);
@@ -82,9 +85,9 @@ export default function MapView({
       zoom: 15,
       zoomControl: false,
     });
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    tileLayerRef.current = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap',
-    } ).addTo(map);
+    }).addTo(map);
     L.control.zoom({ position: 'bottomright' }).addTo(map);
 
     mapContainerRef.current.addEventListener('change', (e) => {
@@ -106,6 +109,16 @@ export default function MapView({
     mapRef.current = map;
     return () => { map.remove(); mapRef.current = null; };
   }, []);
+
+  useEffect(() => {
+    if (tileLayerRef.current) {
+      if (isSatellite) {
+        tileLayerRef.current.setUrl('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}');
+      } else {
+        tileLayerRef.current.setUrl('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
+      }
+    }
+  }, [isSatellite]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -448,10 +461,23 @@ export default function MapView({
   }, [trafficWeights, edges, nodes]);
 
   return (
-    <div
-      ref={mapContainerRef}
-      className="absolute inset-0 z-0"
-      style={{ cursor: mode === 'editor' ? 'crosshair' : 'default' }}
-    />
+    <>
+      <div
+        ref={mapContainerRef}
+        className="absolute inset-0 z-0"
+        style={{ cursor: mode === 'editor' ? 'crosshair' : 'default' }}
+      />
+      <button
+        onClick={() => setIsSatellite(!isSatellite)}
+        className="absolute bottom-[20px] right-[60px] z-[1000] p-2.5 bg-white/95 backdrop-blur-md rounded-full shadow-[0_4px_12px_rgba(0,0,0,0.15)] border border-gray-200 text-slate-600 hover:text-emerald-700 hover:bg-white transition-all flex items-center justify-center group"
+        title={isSatellite ? "Mudar para visualização em mapa" : "Mudar para visualização por satélite"}
+      >
+        {isSatellite ? (
+          <MapIcon size={22} className="group-hover:scale-110 transition-transform" />
+        ) : (
+          <Globe size={22} className="group-hover:scale-110 transition-transform" />
+        )}
+      </button>
+    </>
   );
 }
