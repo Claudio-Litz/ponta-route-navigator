@@ -116,7 +116,7 @@ export default function Index() {
         onRemoveMission={sim.removeMission}
       />
 
-      <RadioConsole logs={sim.logs} />
+      <RadioConsole logs={sim.logs} isMuted={sim.isMuted} toggleMute={sim.toggleMute} />
 
       {/* Inline Context Menus */}
       {contextMenu && contextNode && (

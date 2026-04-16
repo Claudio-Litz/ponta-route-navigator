@@ -27,6 +27,16 @@ export function useSimulation() {
   const [trafficWeights, setTrafficWeights] = useState<Map<string, number>>(new Map());
   const [simTime, setSimTime] = useState(0);
   const lastRealTimeRef = useRef<number>(0);
+  const isMutedRef = useRef(false);
+  const [isMuted, setIsMutedState] = useState(false);
+
+  const toggleMute = useCallback(() => {
+    setIsMutedState(m => {
+      isMutedRef.current = !m;
+      if (!m && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+      return !m;
+    });
+  }, []);
 
   // Always-current refs for use inside intervals/callbacks
   const vehiclesRef = useRef<Vehicle[]>([]);
@@ -149,6 +159,7 @@ export function useSimulation() {
   }, []);
 
   const speak = useCallback((text: string, vehicleId?: string) => {
+    if (isMutedRef.current) return;
     if (focusedVehicleIdRef.current && vehicleId && focusedVehicleIdRef.current !== vehicleId) return;
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
@@ -1023,5 +1034,6 @@ export function useSimulation() {
     exportVehicleLog, processNavigation,
     graphRef,
     setSimTime,
+    isMuted, toggleMute,
   };
 }

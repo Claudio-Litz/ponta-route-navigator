@@ -3,7 +3,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { GraphNode, GraphEdge, Vehicle, haversine, GroundType, isRailwayBlocked } from '@/lib/engine';
 import { AppMode } from '@/hooks/useSimulation';
-import { Map as MapIcon, Globe } from 'lucide-react';
+import { Map as MapIcon, Globe, Eye, EyeOff } from 'lucide-react';
 
 interface MapViewProps {
   nodes: GraphNode[];
@@ -31,9 +31,9 @@ interface MapViewProps {
 
 const NODE_COLORS = { POI: '#22c55e', Junction: '#64748b', selected: '#facc15' };
 const GROUND_COLORS: Record<GroundType, string> = {
-  asfalto: '#64748b',
-  terra: '#92400e',
-  brita: '#475569',
+  asfalto: '#fde047',
+  terra: '#eab308',
+  brita: '#ca8a04',
 };
 
 export default function MapView({
@@ -44,6 +44,7 @@ export default function MapView({
   processNavigation, updateEdgeAttribute, simTime, trafficWeights
 }: MapViewProps) {
   const [isSatellite, setIsSatellite] = useState(false);
+  const [showJunctions, setShowJunctions] = useState(true);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const tileLayerRef = useRef<L.TileLayer | null>(null);
@@ -134,11 +135,12 @@ export default function MapView({
     const map = mapRef.current;
     if (!map) return;
     const existing = nodeMarkersRef.current;
-    const currentIds = new Set(nodes.map((n) => n.id));
+    const currentIds = new Set(nodes.filter(n => showJunctions || n.type === 'POI').map((n) => n.id));
     for (const [id, marker] of existing) {
       if (!currentIds.has(id)) { marker.remove(); existing.delete(id); }
     }
     for (const node of nodes) {
+      if (!showJunctions && node.type !== 'POI') continue;
       const isSelected = selectedNodes.includes(node.id);
       const color = isSelected ? NODE_COLORS.selected : NODE_COLORS[node.type];
       if (existing.has(node.id)) {
@@ -156,7 +158,7 @@ export default function MapView({
         existing.set(node.id, marker);
       }
     }
-  }, [nodes, selectedNodes, onNodeClick, onNodeRightClick]);
+  }, [nodes, selectedNodes, onNodeClick, onNodeRightClick, showJunctions]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -203,7 +205,7 @@ export default function MapView({
         const tip: L.LatLngExpression = [midLat, midLng];
         const left: L.LatLngExpression = [midLat - arrowLen * Math.cos(angle - 0.5), midLng - arrowLen * Math.sin(angle - 0.5)];
         const right: L.LatLngExpression = [midLat - arrowLen * Math.cos(angle + 0.5), midLng - arrowLen * Math.sin(angle + 0.5)];
-        const arrow = L.polyline([left, tip, right], { color: '#64748b', weight: 2, opacity: 0.9 }).addTo(map);
+        const arrow = L.polyline([left, tip, right], { color: '#64748b', weight: 2, opacity: 0.9, interactive: false }).addTo(map);
         arrowsRef.current.push(arrow);
       }
     }
@@ -383,8 +385,8 @@ export default function MapView({
       .filter(Boolean)
       .map((n) => [n!.lat, n!.lng] as L.LatLngExpression);
 
-    const glow = L.polyline(latlngs, { color: '#22c55e', weight: 8, opacity: 0.3, className: 'neon-glow-line' }).addTo(map);
-    const line = L.polyline(latlngs, { color: '#22c55e', weight: 4, opacity: 0.9, className: 'neon-glow-line' }).addTo(map);
+    const glow = L.polyline(latlngs, { color: '#22c55e', weight: 8, opacity: 0.3, className: 'neon-glow-line', interactive: false }).addTo(map);
+    const line = L.polyline(latlngs, { color: '#22c55e', weight: 4, opacity: 0.9, className: 'neon-glow-line', interactive: false }).addTo(map);
     focusRouteRef.current = [glow, line];
 
     const marker = vehicleMarkersRef.current.get(focusedVehicleId);
@@ -467,17 +469,30 @@ export default function MapView({
         className="absolute inset-0 z-0"
         style={{ cursor: mode === 'editor' ? 'crosshair' : 'default' }}
       />
-      <button
-        onClick={() => setIsSatellite(!isSatellite)}
-        className="absolute bottom-[20px] right-[60px] z-[1000] p-2.5 bg-white/95 backdrop-blur-md rounded-full shadow-[0_4px_12px_rgba(0,0,0,0.15)] border border-gray-200 text-slate-600 hover:text-emerald-700 hover:bg-white transition-all flex items-center justify-center group"
-        title={isSatellite ? "Mudar para visualização em mapa" : "Mudar para visualização por satélite"}
-      >
-        {isSatellite ? (
-          <MapIcon size={22} className="group-hover:scale-110 transition-transform" />
-        ) : (
-          <Globe size={22} className="group-hover:scale-110 transition-transform" />
-        )}
-      </button>
+      <div className="absolute bottom-[20px] right-[60px] z-[1000] flex gap-2">
+        <button
+          onClick={() => setShowJunctions(!showJunctions)}
+          className="p-2.5 bg-white/95 backdrop-blur-md rounded-full shadow-[0_4px_12px_rgba(0,0,0,0.15)] border border-gray-200 text-slate-600 hover:text-emerald-700 hover:bg-white transition-all flex items-center justify-center group"
+          title={showJunctions ? "Ocultar junções" : "Mostrar junções"}
+        >
+          {showJunctions ? (
+            <Eye size={22} className="group-hover:scale-110 transition-transform" />
+          ) : (
+            <EyeOff size={22} className="group-hover:scale-110 transition-transform" />
+          )}
+        </button>
+        <button
+          onClick={() => setIsSatellite(!isSatellite)}
+          className="p-2.5 bg-white/95 backdrop-blur-md rounded-full shadow-[0_4px_12px_rgba(0,0,0,0.15)] border border-gray-200 text-slate-600 hover:text-emerald-700 hover:bg-white transition-all flex items-center justify-center group"
+          title={isSatellite ? "Mudar para visualização em mapa" : "Mudar para visualização por satélite"}
+        >
+          {isSatellite ? (
+            <MapIcon size={22} className="group-hover:scale-110 transition-transform" />
+          ) : (
+            <Globe size={22} className="group-hover:scale-110 transition-transform" />
+          )}
+        </button>
+      </div>
     </>
   );
 }
