@@ -135,8 +135,8 @@ export function useSimulation() {
         }
 
         if (hasConflict) {
-          // peso = 1.5^n − 1  (n = total vehicles predicted on this segment)
-          weights.set(key, Math.pow(1.5, entries.length) - 1);
+          // Store raw count of vehicles predicted on this segment
+          weights.set(key, entries.length);
         }
       }
 
@@ -561,7 +561,7 @@ export function useSimulation() {
 
   // ── Vehicle CRUD ──────────────────────────────────────────────────────────
 
-  const addVehicle = useCallback((options?: { name?: string; vehicleType?: VehicleType; waitingPoiId?: string }) => {
+  const addVehicle = useCallback((options?: { name?: string; vehicleType?: VehicleType; iconType?: VehicleIconType; waitingPoiId?: string }) => {
     const newVehicle: Vehicle = {
       id: crypto.randomUUID(),
       name: options?.name?.trim() || `Veículo ${vehiclesRef.current.length + 1}`,
@@ -574,6 +574,7 @@ export function useSimulation() {
       width: 2.5,
       height: 3.0,
       type: options?.vehicleType ?? 'operational',
+      iconType: options?.iconType ?? 'car',
       waitingPoiId: options?.waitingPoiId || undefined,
       currentMissionId: undefined,
       path: null,
@@ -806,9 +807,40 @@ export function useSimulation() {
     }
   }, [addLog]);
 
-  // ── Periodic retry for stuck/waiting vehicles ─────────────────────────────
-  // Every 2 real seconds, try to find a route for vehicles that are stuck.
-  // This ensures they resume automatically when a blocked edge is freed.
+  // ── Periodic retry for stuck/waiting vehicles & global recalc ─────────────
+  
+  const recalculateAllVehicles = useCallback((activeEdges: Map<string, {from: string, to: string}>) => {
+    let changed = false;
+    const newVehicles = vehiclesRef.current.map(v => ({ ...v }));
+
+    for (let i = 0; i < newVehicles.length; i++) {
+       const v = newVehicles[i];
+       if (v.status !== 'moving') continue;
+       const edge = activeEdges.get(v.id);
+       if (!edge || !v.destinationId) continue;
+
+       const mission = missionsRef.current.find(m => m.id === v.currentMissionId);
+       const priority: MissionPriority = mission?.priority ?? 'medium';
+
+       const result = findPath(graphRef.current, edge.to, v.destinationId, v, simTimeRef.current, trafficWeightsRef.current, priority);
+       
+       if (result.success) {
+          const newPath = [edge.from, ...result.path];
+          const sameRoute = v.path && v.path.length === newPath.length && newPath.every((id, i) => id === v.path![i]);
+          if (!sameRoute) {
+             newVehicles[i] = { ...v, path: newPath, pathVersion: v.pathVersion + 1, needsRecalc: false };
+             changed = true;
+          }
+       }
+    }
+    
+    if (changed) {
+       vehiclesRef.current = newVehicles;
+       setVehicles(newVehicles);
+       runAssignmentRef.current(); // Sync traffic map
+    }
+  }, []);
+
   useEffect(() => {
     if (!simulationRunning) return;
     const id = setInterval(() => {
@@ -1031,7 +1063,7 @@ export function useSimulation() {
     startSimulation, stopSimulation,
     recalculateVehicle, onVehicleArrived, changeVehicleDestination,
     exportMap, importMap,
-    exportVehicleLog, processNavigation,
+    exportVehicleLog, processNavigation, recalculateAllVehicles,
     graphRef,
     setSimTime,
     isMuted, toggleMute,

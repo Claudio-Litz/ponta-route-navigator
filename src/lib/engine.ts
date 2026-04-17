@@ -54,6 +54,8 @@ export interface NavigationInstruction {
 
 export type VehicleType = 'operational' | 'maintenance' | 'other';
 
+export type VehicleIconType = 'car' | 'truck' | 'heavy';
+
 // === Traffic types ===
 
 export interface RouteStep {
@@ -86,6 +88,7 @@ export interface Vehicle {
   width: number;       // metros
   height: number;      // metros
   type: VehicleType;
+  iconType: VehicleIconType;
   waitingPoiId?: string;
   currentMissionId?: string;
   path: string[] | null;
@@ -420,10 +423,8 @@ export function findPath(
     return { path: [], totalCost: 0, success: false };
   }
 
-  // How much this vehicle cares about traffic penalties
-  const trafficFactor =
-    vehiclePriority === 'high'   ? 0.05 :
-    vehiclePriority === 'medium' ? 0.50 : 1.0;
+  // How much this vehicle cares about traffic penalties is now handled inside the loop
+  // but we can preserve the variable if needed elsewhere (removed).
 
   const openSet = new Set([startId]);
   const cameFrom = new Map<string, string>();
@@ -450,13 +451,21 @@ export function findPath(
     const currentTime = startTime + currentG;
 
     for (const { node: neighbor, cost } of graph.getNeighbors(current, vehicle, currentTime)) {
-      // ── Apply traffic penalty (additive, proportional to edge cost) ────
+      // ── Apply traffic penalty (proportional to vehicle count) ────────────
       let finalCost = cost;
       if (trafficWeights && cost > 0) {
-        const penalty = trafficWeights.get(`${current}->${neighbor.id}`) ?? 0;
-        if (penalty > 0) {
-          // custoFinal = custoBase + (custoBase × peso × fatorPrioridade)
-          finalCost += cost * penalty * trafficFactor;
+        const vehicleCount = trafficWeights.get(`${current}->${neighbor.id}`) ?? 0;
+        if (vehicleCount > 1) {
+          // Travel time physically increases by 5% per extra vehicle
+          const physicalFactor = Math.max(0.1, 1 - (vehicleCount - 1) * 0.05);
+          const physicalCost = cost / physicalFactor;
+          
+          // Apply priority bullying
+          // High priority evaluates closer to true physical cost.
+          // Low priority avoids it heavily (adds artificial penalty).
+          const artificialPenalty = (physicalCost - cost) * (vehiclePriority === 'low' ? 3 : (vehiclePriority === 'medium' ? 1 : 0));
+          
+          finalCost = physicalCost + artificialPenalty;
         }
       }
 

@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { GraphNode, Vehicle, VehicleType, Mission, MissionPriority } from '@/lib/engine';
+import { GraphNode, Vehicle, VehicleType, VehicleIconType, Mission, MissionPriority } from '@/lib/engine';
 import { AppMode } from '@/hooks/useSimulation';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
@@ -15,7 +15,7 @@ interface ControlPanelProps {
   // Vehicles
   vehicles: Vehicle[];
   simulationRunning: boolean;
-  onAddVehicle: (opts?: { name?: string; vehicleType?: VehicleType; waitingPoiId?: string }) => void;
+  onAddVehicle: (opts?: { name?: string; vehicleType?: VehicleType; iconType?: VehicleIconType; waitingPoiId?: string }) => void;
   onRemoveVehicle: (id: string) => void;
   onUpdateVehicle: (id: string, field: string, value: any) => void;
   onStartSimulation: () => void;
@@ -34,7 +34,13 @@ const labelClass = 'text-[9px] text-muted-foreground uppercase tracking-wide';
 const VEHICLE_TYPE_LABELS: Record<VehicleType, string> = {
   operational: 'Operacional',
   maintenance: 'Manutenção',
-  other: 'Outro',
+  other: 'Outros',
+};
+
+const VEHICLE_ICON_LABELS: Record<VehicleIconType, string> = {
+  car: 'Carro',
+  truck: 'Caminhão',
+  heavy: 'Veículo Pesado',
 };
 
 const PRIORITY_LABELS: Record<MissionPriority, string> = {
@@ -71,6 +77,7 @@ export default function ControlPanel({
   // New vehicle form state
   const [newVehicleName, setNewVehicleName] = useState('');
   const [newVehicleType, setNewVehicleType] = useState<VehicleType>('operational');
+  const [newVehicleIconType, setNewVehicleIconType] = useState<VehicleIconType>('car');
   const [newVehiclePoiId, setNewVehiclePoiId] = useState('');
 
   // New mission form state
@@ -84,6 +91,7 @@ export default function ControlPanel({
     onAddVehicle({
       name: newVehicleName,
       vehicleType: newVehicleType,
+      iconType: newVehicleIconType,
       waitingPoiId: newVehiclePoiId || undefined,
     });
     setNewVehicleName('');
@@ -157,11 +165,19 @@ export default function ControlPanel({
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className={labelClass}>Tipo</label>
+                  <label className={labelClass}>Tipo Operacional</label>
                   <select value={newVehicleType} onChange={(e) => setNewVehicleType(e.target.value as VehicleType)} className={selectClass}>
                     <option value="operational">Operacional</option>
                     <option value="maintenance">Manutenção</option>
-                    <option value="other">Outro</option>
+                    <option value="other">Outros</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className={labelClass}>Ícone (Visual)</label>
+                  <select value={newVehicleIconType} onChange={(e) => setNewVehicleIconType(e.target.value as VehicleIconType)} className={selectClass}>
+                    <option value="car">Carro</option>
+                    <option value="truck">Caminhão</option>
+                    <option value="heavy">Veículo Pesado</option>
                   </select>
                 </div>
                 <div className="space-y-1">
@@ -279,7 +295,7 @@ export default function ControlPanel({
                   <select value={newMissionType} onChange={(e) => setNewMissionType(e.target.value as VehicleType)} className={selectClass}>
                     <option value="operational">Operacional</option>
                     <option value="maintenance">Manutenção</option>
-                    <option value="other">Outro</option>
+                    <option value="other">Outros</option>
                   </select>
                 </div>
                 <div className="space-y-1">

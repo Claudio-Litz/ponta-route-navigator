@@ -71,6 +71,7 @@ export default function Index() {
         processNavigation={sim.processNavigation}
         simTime={sim.simTime}
         trafficWeights={sim.trafficWeights}
+        recalculateAllVehicles={sim.recalculateAllVehicles}
       />
 
       <div className="absolute top-4 left-4 z-30 flex flex-col gap-2">

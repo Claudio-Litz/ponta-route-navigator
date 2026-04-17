@@ -23,6 +23,7 @@ interface MapViewProps {
   onRecalcNeeded: (vehicleId: string, fromNodeId: string) => void;
   onChangeDestination: (vehicleId: string, newDestId: string, fromNodeId: string) => void;
   processNavigation: (vehicleId: string, lat: number, lng: number, segmentIndex: number) => void;
+  recalculateAllVehicles: (activeEdges: Map<string, {from: string, to: string}>) => void;
   updateEdgeAttribute?: (id: string, field: keyof GraphEdge, value: any) => void;
   simTime: number;
   /** Traffic congestion weights from the predictive traffic engine */
@@ -36,12 +37,43 @@ const GROUND_COLORS: Record<GroundType, string> = {
   brita: '#ca8a04',
 };
 
+const CarSVG = (color: string) => `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 16H9m10 0h3v-3.15a1 1 0 0 0-.84-.99L16 11l-2.7-3.6a2 2 0 0 0-1.6-.8H9.3a2 2 0 0 0-1.6.8L5 11l-5.16.86a1 1 0 0 0-.84.99V16h3m10 0a2 2 0 1 0-4 0 2 2 0 0 0 4 0zm-10 0a2 2 0 1 0-4 0 2 2 0 0 0 4 0z"/></svg>`;
+const TruckSVG = (color: string) => `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 17h4V5H2v12h3m10 0h2v-4.3a2 2 0 0 0-.6-1.4l-2.4-2.3H14v8zm-5 0a2 2 0 1 0-4 0 2 2 0 0 0 4 0zm10 0a2 2 0 1 0-4 0 2 2 0 0 0 4 0z"/></svg>`;
+const HeavySVG = (color: string) => `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 15h18M6 15v3a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-3M4 12V8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v4M4 12h16m-8-8v4"/></svg>`;
+
+function createVehiclePanelIcon(vehicle: Vehicle) {
+  const svg = vehicle.iconType === 'truck' ? TruckSVG(vehicle.color) 
+            : (vehicle.iconType === 'heavy' ? HeavySVG(vehicle.color) : CarSVG(vehicle.color));
+            
+  const html = `
+    <div style="
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      padding: 4px 6px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+      cursor: pointer;
+      pointer-events: auto;
+      transform: translate(-50%, -100%) translateY(-15px);
+      width: max-content;
+    ">
+      ${svg}
+      <span style="color: #e2e8f0; font-size: 10px; font-weight: 600; line-height: 1;">${vehicle.name}</span>
+    </div>
+  `;
+
+  return L.divIcon({ html, className: '', iconSize: [0, 0], iconAnchor: [0, 0] });
+}
+
 export default function MapView({
   nodes, edges, mode, selectedNodes,
   vehicles, simulationRunning, focusedVehicleId, pois,
   onMapClick, onNodeClick, onNodeRightClick, onEdgeClick,
   onVehicleClick, onVehicleArrived, onRecalcNeeded, onChangeDestination,
-  processNavigation, updateEdgeAttribute, simTime, trafficWeights
+  processNavigation, recalculateAllVehicles, updateEdgeAttribute, simTime, trafficWeights
 }: MapViewProps) {
   const [isSatellite, setIsSatellite] = useState(false);
   const [showJunctions, setShowJunctions] = useState(true);
@@ -52,6 +84,7 @@ export default function MapView({
   const edgeLinesRef = useRef(new Map<string, L.Polyline>());
   const arrowsRef = useRef<L.Polyline[]>([]);
   const vehicleMarkersRef = useRef(new Map<string, L.CircleMarker>());
+  const vehiclePanelsRef = useRef(new Map<string, L.Marker>());
   const animStateRef = useRef(new Map<string, { segmentIndex: number; progress: number; pathVersion: number; blockedSegment?: number }>());
   const frameRef = useRef(0);
   const focusRouteRef = useRef<L.Polyline[]>([]);
@@ -61,8 +94,8 @@ export default function MapView({
   useEffect(() => { vehiclesRef.current = vehicles; }, [vehicles]);
   const nodesRef = useRef(nodes);
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
-  const cbRef = useRef({ onVehicleArrived, onRecalcNeeded, onVehicleClick, onChangeDestination, processNavigation });
-  useEffect(() => { cbRef.current = { onVehicleArrived, onRecalcNeeded, onVehicleClick, onChangeDestination, processNavigation }; });
+  const cbRef = useRef({ onVehicleArrived, onRecalcNeeded, onVehicleClick, onChangeDestination, processNavigation, recalculateAllVehicles });
+  useEffect(() => { cbRef.current = { onVehicleArrived, onRecalcNeeded, onVehicleClick, onChangeDestination, processNavigation, recalculateAllVehicles }; });
   const focusedRef = useRef(focusedVehicleId);
   useEffect(() => { focusedRef.current = focusedVehicleId; }, [focusedVehicleId]);
   const poisRef = useRef(pois);
@@ -217,8 +250,11 @@ export default function MapView({
 
     if (!simulationRunning) {
       cancelAnimationFrame(frameRef.current);
+      if ((window as any).recalcInterval) clearInterval((window as any).recalcInterval);
       vehicleMarkersRef.current.forEach((m) => m.remove());
       vehicleMarkersRef.current.clear();
+      vehiclePanelsRef.current.forEach((m) => m.remove());
+      vehiclePanelsRef.current.clear();
       animStateRef.current.clear();
       focusRouteRef.current.forEach((l) => l.remove());
       focusRouteRef.current = [];
@@ -238,9 +274,22 @@ export default function MapView({
           L.DomEvent.stopPropagation(e);
           cbRef.current.onVehicleClick(v.id);
         });
-        marker.bindTooltip(v.name, { permanent: false, className: 'node-tooltip', direction: 'top', offset: [0, -14] });
         vehicleMarkersRef.current.set(v.id, marker);
-        animStateRef.current.set(v.id, { segmentIndex: 0, progress: 0, pathVersion: v.pathVersion });
+
+        const panel = L.marker([startNode.lat, startNode.lng], {
+          icon: createVehiclePanelIcon(v),
+          zIndexOffset: 1000
+        }).addTo(map);
+        panel.on('click', (e) => {
+          L.DomEvent.stopPropagation(e as any);
+          cbRef.current.onVehicleClick(v.id);
+        });
+        vehiclePanelsRef.current.set(v.id, panel);
+
+        animStateRef.current.set(v.id, { 
+          segmentIndex: 0, progress: 0, pathVersion: v.pathVersion,
+          lastFromId: v.path[0], lastToId: v.path[1]
+        });
       }
     }
 
@@ -261,6 +310,8 @@ export default function MapView({
           if (v.status === 'arrived' || v.status === 'idle') {
             const m = vehicleMarkersRef.current.get(v.id);
             if (m) { m.remove(); vehicleMarkersRef.current.delete(v.id); animStateRef.current.delete(v.id); }
+            const p = vehiclePanelsRef.current.get(v.id);
+            if (p) { p.remove(); vehiclePanelsRef.current.delete(v.id); }
           }
           // 'stuck' vehicles keep their marker — they are frozen in place waiting
           continue;
@@ -268,20 +319,28 @@ export default function MapView({
 
         let state = animStateRef.current.get(v.id);
         if (!state) {
-          state = { segmentIndex: 0, progress: 0, pathVersion: v.pathVersion };
+          state = { segmentIndex: 0, progress: 0, pathVersion: v.pathVersion, lastFromId: v.path[0], lastToId: v.path[1] };
           animStateRef.current.set(v.id, state);
         }
 
         if (state.pathVersion !== v.pathVersion) {
-          state.segmentIndex = 0;
-          state.progress = 0;
+          if (v.path && v.path.length > 1 && state.lastFromId === v.path[0] && state.lastToId === v.path[1]) {
+            state.segmentIndex = 0; // The active edge became index 0 in the new path
+            // progress is preserved! visually seamless
+          } else {
+            state.segmentIndex = 0;
+            state.progress = 0;
+          }
           state.pathVersion = v.pathVersion;
           state.blockedSegment = undefined; // new path — clear blocked flag
         }
 
         if (state.segmentIndex >= v.path.length - 1) {
           const dest = nm.get(v.path[v.path.length - 1]);
-          if (dest) vehicleMarkersRef.current.get(v.id)?.setLatLng([dest.lat, dest.lng]);
+          if (dest) {
+            vehicleMarkersRef.current.get(v.id)?.setLatLng([dest.lat, dest.lng]);
+            vehiclePanelsRef.current.get(v.id)?.setLatLng([dest.lat, dest.lng]);
+          }
           cbRef.current.onVehicleArrived(v.id);
           continue;
         }
@@ -318,9 +377,28 @@ export default function MapView({
 
         let speedKmh = v.speed;
         if (edge) {
+          let extraVehiclesOnEdge = 0;
+          for (const otherV of currentVehicles) {
+            if (otherV.id !== v.id && otherV.status === 'moving' && otherV.path) {
+              const otherState = animStateRef.current.get(otherV.id);
+              if (otherState && otherState.segmentIndex < otherV.path.length - 1) {
+                const otherFrom = otherV.path[otherState.segmentIndex];
+                const otherTo = otherV.path[otherState.segmentIndex + 1];
+                if ((otherFrom === fromNode.id && otherTo === toNode.id) || 
+                    (edge.bidirectional && otherFrom === toNode.id && otherTo === fromNode.id)) {
+                  extraVehiclesOnEdge++;
+                }
+              }
+            }
+          }
+
           const groundFactor = edge.groundType === 'asfalto' ? 1.0 : (edge.groundType === 'terra' ? 0.7 : 0.5);
-          speedKmh = Math.min(v.speed, edge.speedLimit * groundFactor);
-          if (edge.hasMud) speedKmh = Math.min(speedKmh, 30);
+          let effectiveEdgeLimit = edge.speedLimit * groundFactor;
+          if (edge.hasMud) effectiveEdgeLimit = Math.min(effectiveEdgeLimit, 30);
+          
+          const baseSpeedKmh = Math.min(v.speed, effectiveEdgeLimit);
+          const slowdownFactor = Math.max(0.1, 1 - (extraVehiclesOnEdge * 0.05));
+          speedKmh = baseSpeedKmh * slowdownFactor;
         }
 
         const dist = haversine(fromNode.lat, fromNode.lng, toNode.lat, toNode.lng);
@@ -333,22 +411,25 @@ export default function MapView({
           state.blockedSegment = undefined; // cleared a segment — unblock flag
           if (state.segmentIndex >= v.path.length - 1) {
             const dest = nm.get(v.path[v.path.length - 1]);
-            if (dest) vehicleMarkersRef.current.get(v.id)?.setLatLng([dest.lat, dest.lng]);
+            if (dest) {
+              vehicleMarkersRef.current.get(v.id)?.setLatLng([dest.lat, dest.lng]);
+              vehiclePanelsRef.current.get(v.id)?.setLatLng([dest.lat, dest.lng]);
+            }
             cbRef.current.onVehicleArrived(v.id);
             continue;
           }
-          // Trigger traffic-aware rerouting at this natural node boundary.
-          // Safe: vehicle is EXACTLY at path[segmentIndex], so resetting to
-          // segment 0 of the new path (which starts at that same node) has zero
-          // visual jump. vehiclesRef is synced synchronously inside recalculateVehicle.
-          cbRef.current.onRecalcNeeded(v.id, v.path[state.segmentIndex]);
         }
+
+        state.lastFromId = v.path[state.segmentIndex];
+        state.lastToId = v.path[state.segmentIndex + 1];
 
         const p = Math.min(state.progress, 1);
         const lat = fromNode.lat + (toNode.lat - fromNode.lat) * p;
         const lng = fromNode.lng + (toNode.lng - fromNode.lng) * p;
         const marker = vehicleMarkersRef.current.get(v.id);
+        const panel = vehiclePanelsRef.current.get(v.id);
         if (marker) marker.setLatLng([lat, lng]);
+        if (panel) panel.setLatLng([lat, lng]);
 
         cbRef.current.processNavigation(v.id, lat, lng, state.segmentIndex);
 
